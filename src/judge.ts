@@ -9,7 +9,7 @@ import { redact } from './redact.ts';
 import { type Rule, write } from './rules.ts';
 
 /** Part of every case's key: a new prompt or model judges every case again. */
-export const JUDGE_VERSION = 1;
+const JUDGE_VERSION = 1;
 export const JUDGE_MODEL = 'sonnet';
 
 /** An excerpt's size in characters: the whole; a call's or a reply's line; the user's words (they hold the

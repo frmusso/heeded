@@ -1,4 +1,5 @@
-// Applying rules to events: tool checks and, for replies, their language; counting what was kept and broken.
+// Applying rules to events: tool checks and, for replies, their language; counting what was kept and broken, by the
+// judge's verdict where a pattern can't decide, and the cases still waiting for one.
 import type { Event, InstructionFile } from './claude-code.ts';
 import { type Case, excerpts, type Verdict } from './judge.ts';
 import { redact } from './redact.ts';
