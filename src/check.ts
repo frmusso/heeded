@@ -219,14 +219,20 @@ export interface Data {
   byDepth: RuleData['byDepth'];
 }
 
-/** A rule's counts so far; `compiled` for a tool rule that is checked; `waiting`, its latest cases without a verdict. */
+/** A rule's counts so far; `compiled`, a checked tool rule's check or a judgment rule's `when`; `unjudged`, its cases
+ * without a verdict, the latest of them `waiting`. */
 interface Tally {
   rule: Rule; files: Set<string>; all: Count; after: Count; depth: Count[]; evidence: Evidence[]; compiled: Compiled | null;
-  judged: number; toConfirm: number; waiting: Case[];
+  judged: number; unjudged: number; waiting: Case[];
 }
 
 /** The cases a rule keeps waiting, at most: a run judges far fewer. */
 const WAITING = 40;
+/** A judgment rule's sample: judged until 20 of its cases are decided, or 40 judged in all, so a rule whose `when` is
+ * too broad stops costing. */
+const DECIDED = 20;
+const JUDGED = 40;
+const allowed = (t: Tally) => (t.rule.kind === 'judgment' ? Math.max(0, Math.min(JUDGED - t.judged, DECIDED - t.all.applied)) : Infinity);
 
 /** Into a rule's cases waiting, latest first (ties by id), the oldest left out past the limit. */
 function wait(list: Case[], c: Case) {
@@ -248,7 +254,8 @@ function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, c: Compiled | n
 /**
  * Counts, over a stream of events, how often each rule applied and how often it was broken. Each transcript starts with
  * no file in effect; the rules in effect are those of the files its `instructions` events recorded. A call a tool
- * rule's patterns say broke it is a candidate: it counts by the judge's verdict, and waits for one until then.
+ * rule's patterns say broke it is a candidate, and a call or reply a judgment rule is about is a case of it: either
+ * counts by the judge's verdict, and waits for one until then.
  */
 export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; versions: Version[] } | null,
   verdictOf: (id: string) => Verdict | null = () => null) {
@@ -289,14 +296,15 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
       for (const rule of found.rules) {
         let t = tallies.get(rule.id);
         if (!t) {
-          // verify demoted every tool rule whose check doesn't compile
-          const compiled = rule.kind === 'tool' && !rule.demoted ? compile(rule.check!) as Compiled : null;
+          // verify demoted every tool rule, and gave no cases to every judgment rule, whose check doesn't compile
+          const compiled = (rule.kind === 'tool' && !rule.demoted) || (rule.kind === 'judgment' && !rule.noCases && !rule.check?.reply)
+            ? compile(rule.check!) as Compiled : null;
           t = { rule, files: new Set(), all: zero(), after: zero(), depth: DEPTHS.map(zero), evidence: [], compiled, judged: 0,
-            toConfirm: 0, waiting: [] };
+            unjudged: 0, waiting: [] };
           tallies.set(rule.id, t);
         }
         t.files.add(file.path);
-        if (!ids.has(rule.id) && !rule.demoted && rule.kind !== 'judgment') {
+        if (!ids.has(rule.id) && !rule.demoted && !rule.noCases) {
           ids.add(rule.id);
           checked.push(t);
         }
@@ -340,20 +348,28 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     let detected: string | null | undefined;
     for (const t of checked) {
       let v: 'none' | 'kept' | 'broken' = 'none';
-      if (e.kind === 'call' && t.compiled) v = verdict(t.compiled, e.tool, e.input);
-      if (e.kind === 'reply' && t.rule.kind === 'language') {
+      // Whether the verdict is the judge's: a tool rule's candidate, or a case of a judgment rule (a call its `when`
+      // finds, or any reply for a rule about replies).
+      let forJudge = false;
+      if (t.rule.kind === 'judgment') {
+        forJudge = e.kind === 'reply' ? t.rule.check?.reply === true : t.compiled !== null && applies(t.compiled, e.tool, e.input);
+      } else if (e.kind === 'call' && t.compiled) {
+        v = verdict(t.compiled, e.tool, e.input);
+        forJudge = v === 'broken';
+      } else if (e.kind === 'reply' && t.rule.kind === 'language') {
         detected ??= language(e.text);
         if (detected) v = detected === t.rule.check?.language ? 'kept' : 'broken';
       }
-      if (v === 'none') continue;
+      if (v === 'none' && !forJudge) continue;
       seen.add(e.id);
       let quote: string | undefined;
-      if (v === 'broken' && t.compiled) {
+      let own: string | undefined; // a judgment case's own line in its excerpt
+      if (forJudge) {
         const { text, key } = excerpt.of(e);
         const id = `${t.rule.id}-${key}`;
         const judged = verdictOf(id);
         if (!judged) {
-          t.toConfirm++;
+          t.unjudged++;
           wait(t.waiting, { id, rule: t.rule, excerpt: text, at: e.at });
           continue;
         }
@@ -361,12 +377,14 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         if (judged.verdict === 'none') continue;
         v = judged.verdict;
         quote = judged.quote;
+        if (t.rule.kind === 'judgment') own = text.slice(text.lastIndexOf('\n') + 1);
       }
       add(t.all, v === 'broken');
       if (e.compactions > 0) add(t.after, v === 'broken');
       add(t.depth[DEPTHS.findLastIndex((d) => e.depth >= d)], v === 'broken');
       if (v === 'broken') {
-        t.evidence.push({ at: e.at, session, agent, text: evidence(e, t.compiled, detected ?? null), ...(quote ? { quote } : {}) });
+        const text = own === undefined ? evidence(e, t.compiled, detected ?? null) : own.length > 200 ? `${own.slice(0, 200)}…` : own;
+        t.evidence.push({ at: e.at, session, agent, text, ...(quote ? { quote } : {}) });
       }
     }
   }
@@ -391,10 +409,10 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
       excerpt.push(e);
     },
 
-    /** Per rule, its latest cases without a verdict. */
+    /** Per rule, its latest cases without a verdict: for a judgment rule, only as many as its sample still takes. */
     waiting(): { tool: Case[][]; judgment: Case[][] } {
-      const of = (kind: Rule['kind']) => [...tallies.values()].filter((t) => t.rule.kind === kind && t.waiting.length)
-        .map((t) => t.waiting);
+      const of = (kind: Rule['kind']) => [...tallies.values()].filter((t) => t.rule.kind === kind)
+        .map((t) => t.waiting.slice(0, allowed(t))).filter((l) => l.length);
       return { tool: of('tool'), judgment: of('judgment') };
     },
 
@@ -402,19 +420,19 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     readVersions,
 
     result(): Data {
-      const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence, judged, toConfirm }): RuleData => ({
+      const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence, judged, unjudged }): RuleData => ({
         id: rule.id,
         name: rule.name,
         quote: rule.quote,
         files: [...files],
         status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
-          : all.broken ? 'broken' : all.applied ? 'kept' : toConfirm ? 'to-confirm' : 'never-applied',
+          : all.broken ? 'broken' : all.applied ? 'kept' : unjudged ? 'to-confirm' : 'never-applied',
         ...(rule.demoted ? { reason: rule.demoted } : {}),
         ...(rule.check ? { check: rule.check } : {}),
         applied: all.applied,
         broken: all.broken,
         judged,
-        toConfirm,
+        toConfirm: rule.kind === 'tool' ? unjudged : 0,
         afterCompaction: after,
         byDepth: buckets(depth),
         tokens: Math.ceil(rule.quote.length / 4),
@@ -432,7 +450,8 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           sum[i].broken += c.broken;
         });
       }
-      const toJudge = rules.reduce((n, r) => n + r.toConfirm, 0);
+      // Every candidate to confirm; of a judgment rule's cases, as many as its sample still takes.
+      const toJudge = [...tallies.values()].reduce((n, t) => n + Math.min(allowed(t), t.unjudged), 0);
       return { from, to, sessions, subagents, files: [...files], notRead: new Set(pending().map((p) => p.section.hash)).size,
         toJudge, rules, byDepth: buckets(sum) };
     },

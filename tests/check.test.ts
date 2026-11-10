@@ -454,3 +454,57 @@ test('after compaction and by depth, candidates count once decided', () => {
   assert.deepEqual(r.afterCompaction, { applied: 1, broken: 1 });
   assert.deepEqual(r.byDepth.map((b) => [b.applied, b.broken]), [[0, 0], [1, 1], [0, 0], [0, 0]]);
 });
+
+// Judgment rules: judged on a sample of their latest cases.
+const commit = rule({ quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment', trigger: 'committing',
+  check: { field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' } },
+  keeping: [{ tool: 'Bash', value: 'git commit -m x' }] });
+const said = rule({ quote: 'say what you changed', name: 'say what you changed', kind: 'judgment', trigger: 'replying',
+  check: { reply: true } });
+/** The judge, in turn: the n-th case asked about gets the n-th verdict, the ones after none yet. */
+const inTurn = (verdicts: Verdict[]) => {
+  const given = new Map<string, Verdict | null>();
+  return (id: string) => {
+    if (!given.has(id)) given.set(id, verdicts[given.size] ?? null);
+    return given.get(id)!;
+  };
+};
+
+test("a judgment rule's cases: the calls its when matches, and every reply for a reply rule", () => {
+  const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m x', at(1)), bash('git status', at(2)),
+    reply('done', at(3)), reply(EN, at(4))], { A: [commit, said] }, {}, unjudged);
+  const ends = Object.fromEntries(c.waiting().judgment.map((l) => [l[0].rule.name, l.map((k) => k.excerpt.split('\n').at(-1))]));
+  assert.deepEqual(ends, { 'commit only when asked': ['call Bash: git commit -m x'], 'say what you changed': [`reply: ${EN}`, 'reply: done'] });
+  assert.deepEqual(c.waiting().tool, []);
+  assert.equal(c.result().toJudge, 3);
+});
+
+test("a judgment rule's share is over its decided cases: none leaves them", () => {
+  const long = `git commit -m "${'x'.repeat(300)}"`;
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m a', at(1)), bash('git commit -m b', at(2)),
+    bash(long, at(3)), bash('git commit -m d', at(4))], { A: [commit] }, {},
+  inTurn([{ verdict: 'kept' }, { verdict: 'kept' }, { verdict: 'broken', quote: 'git commit -m' }, { verdict: 'none' }]));
+  assert.deepEqual(tally(data, commit), { status: 'judgment', applied: 3, broken: 1, judged: 4, toConfirm: 0 });
+  assert.deepEqual(data.rules[0].evidence,
+    [{ ...at(3), session: 's1', agent: null, text: `${`call Bash: ${long}`.slice(0, 200)}…`, quote: 'git commit -m' }]);
+});
+
+test('judging a rule stops at 20 decided or 40 judged', () => {
+  const commits = (n: number) => [start(), files({ '/r/CLAUDE.md': 'A' }),
+    ...Array.from({ length: n }, (_, i) => bash(`git commit -m c${i}`, { at: `2026-11-02T10:${String(i).padStart(2, '0')}:00Z` }))];
+  const waiting = (n: number, verdicts: Verdict[]) => {
+    const c = feed(commits(n), { A: [commit] }, {}, inTurn(verdicts));
+    return [c.waiting().judgment.flat().length, c.result().toJudge];
+  };
+  const times = (n: number, verdict: Verdict['verdict']): Verdict[] => Array.from({ length: n }, () => ({ verdict }));
+  assert.deepEqual(waiting(23, times(18, 'kept')), [2, 2]);
+  assert.deepEqual(waiting(42, times(39, 'none')), [1, 1]);
+  assert.deepEqual(waiting(22, times(20, 'kept')), [0, 0]);
+});
+
+test('a judgment rule without cases is never a case', () => {
+  const vague = rule({ quote: 'think before you act', name: 'think first', kind: 'judgment', trigger: 'always' });
+  const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m x'), reply(EN)], { A: [vague] }, {}, unjudged);
+  assert.deepEqual(c.waiting().judgment, []);
+  assert.deepEqual(tally(c.result(), vague), { status: 'judgment', applied: 0, broken: 0, judged: 0, toConfirm: 0 });
+});
