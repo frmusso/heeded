@@ -1,12 +1,14 @@
-// The real extraction call, by hand only (HEEDED_LIVE=1): one sonnet call on the developer's own claude, a few cents.
-// It checks that the call is isolated — a CLAUDE.md in a folder above the call's own never reaches it — and that the
-// answer fits the schema and verifies. Run it again whenever claude changes its flags.
+// The real calls, by hand only (HEEDED_LIVE=1), on the developer's own claude, a few cents each. The extraction: the
+// call is isolated (a CLAUDE.md in a folder above the call's own never reaches it), and its answer fits the schema and
+// verifies. The judge: measured on a labelled set. Run them again whenever claude changes its flags.
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { estimate, judge, verdicts } from '../src/judge.ts';
 import { extract, load, sections, verify } from '../src/rules.ts';
+import { cases, LABELLED } from './support/labelled.ts';
 
 const skip = process.env.HEEDED_LIVE !== '1' && 'calls claude: set HEEDED_LIVE=1 to run it';
 
@@ -27,6 +29,31 @@ test('the extraction call is isolated, and its answer verifies', { skip }, async
   } finally {
     if (before === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the judge on the labelled set: no false broken, recall 80% or more', { skip }, async (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));
+  try {
+    const list = cases();
+    const result = await judge(list, process.env, dir);
+    const of = verdicts(dir);
+    const said = list.map((k) => of(k.id)?.verdict);
+    const broken = LABELLED.map((l, i) => [l.expected === 'broken', said[i] === 'broken']);
+    const found = broken.filter(([expected, given]) => expected && given).length;
+    const given = broken.filter(([, g]) => g).length;
+    const precision = given ? found / given : 1; // no broken given: none false
+    const recall = found / broken.filter(([expected]) => expected).length;
+    t.diagnostic(`precision on broken ${precision.toFixed(2)} · recall ${recall.toFixed(2)} · ${result.tokens} tokens`
+      + ` (estimate ${estimate(list).tokens})`);
+    for (const [i, l] of LABELLED.entries()) {
+      if (said[i] !== l.expected) t.diagnostic(`${l.expected} judged ${said[i]}: ${l.excerpt.split('\n').at(-1)}`);
+    }
+    assert.deepEqual(result.errors, []);
+    assert.equal(precision, 1);
+    assert.ok(recall >= 0.8, String(recall));
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -6,6 +6,7 @@ import type { Event } from '../src/claude-code.ts';
 import { type Case, estimate, excerpts, judge, saveVerdict, select, verdicts } from '../src/judge.ts';
 import type { Rule } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
+import { cases as labelled, LABELLED } from './support/labelled.ts';
 import { sandbox } from './support/sandbox.ts';
 
 type Seen = Extract<Event, { kind: 'call' | 'reply' }>;
@@ -255,4 +256,15 @@ test('the selection stops at the budget', () => {
 
 test('nothing waiting, nothing selected', () => {
   assert.deepEqual(select([], [], 150_000), []);
+});
+
+test('the labelled set: every case is well formed', () => {
+  assert.equal(LABELLED.length, 18);
+  const list = labelled();
+  for (const k of list) {
+    const lines = k.excerpt.split('\n');
+    assert.match(lines[0], /^(you|task): /, k.excerpt);
+    assert.match(lines.at(-1)!, /^(call |reply: )/, k.excerpt);
+  }
+  assert.equal(new Set(list.map((k) => k.id)).size, LABELLED.length);
 });
