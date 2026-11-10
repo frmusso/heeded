@@ -30,10 +30,27 @@ test('an excerpt: the last prompt, the events since, one per line, the case last
     call('railway up')), 'you: deploy the fix when the tests pass\ncall Bash: npm test\nreply: All 12 tests pass.\ncall Bash: railway up');
 });
 
-test('a new prompt starts a new excerpt; an answer is a line in it', () => {
+test('a new prompt starts a new excerpt, after the prompts before it; an answer is a line in it', () => {
   assert.equal(excerpt([prompt('fix the login bug'), call('npm test'), prompt('now deploy it'), call('git status'),
     prompt('User has answered your questions: "Deploy now?"="Yes"', 'user', false)], call('railway up')),
-  'you: now deploy it\ncall Bash: git status\nyou: User has answered your questions: "Deploy now?"="Yes"\ncall Bash: railway up');
+  'you: fix the login bug\nyou: now deploy it\ncall Bash: git status\nyou: User has answered your questions: "Deploy now?"="Yes"'
+    + '\ncall Bash: railway up');
+});
+
+test("the user's two prompts before the turn's come first, cut at 300; a go given there is seen", () => {
+  const long = `fix the login bug, then deploy it ${'and more '.repeat(60)}`;
+  assert.equal(excerpt([prompt('look at the logs'), prompt(long), call('npm test'), prompt('also update the readme'),
+    call({ file_path: '/r/README.md' }, 'Edit')], call('railway up')), ['you: look at the logs', `you: ${long.slice(0, 299)}…`,
+    'you: also update the readme', 'call Edit: /r/README.md', 'call Bash: railway up'].join('\n'));
+  const four = excerpt([prompt('one'), prompt('two'), prompt('three'), prompt('four')], call('ls'));
+  assert.equal(four, 'you: two\nyou: three\nyou: four\ncall Bash: ls');
+});
+
+test('over 6,000 characters, the prompts before the turn go after the other lines, before the turn\'s own words', () => {
+  const calls = Array.from({ length: 30 }, (_, i) => call(`echo ${String(i + 1).padStart(2, '0')}${'x'.repeat(288)}`));
+  const text = excerpt([prompt('deploy when green'), prompt('go'), ...calls, prompt('Yes', 'user', false)], call('railway up'));
+  assert.ok(text.startsWith('you: deploy when green\nyou: go\n…\n'), text.slice(0, 40));
+  assert.ok(text.length <= 6000);
 });
 
 test("a subagent's task is a task: line, never you:", () => {
@@ -92,9 +109,10 @@ test('a turn of 1,000 events keeps its excerpt under 6,000 characters', () => {
   assert.ok(text.startsWith('you: refactor everything\n…\n'));
 });
 
-test('a new transcript starts empty: no start line', () => {
+test('a new transcript starts empty: no start line, no prompt before it', () => {
   assert.equal(excerpt([prompt('fix the bug'), call('npm test'), transcript, call('git status')], call('git push')),
     'call Bash: git status\ncall Bash: git push');
+  assert.equal(excerpt([prompt('fix the bug'), transcript, prompt('push it')], call('git push')), 'you: push it\ncall Bash: git push');
 });
 
 test('secrets are redacted, and a line holds no line breaks', () => {
@@ -277,7 +295,7 @@ test('nothing waiting, nothing selected', () => {
 });
 
 test('the labelled set: every case is well formed', () => {
-  assert.equal(LABELLED.length, 18);
+  assert.equal(LABELLED.length, 20);
   const list = labelled();
   for (const k of list) {
     const lines = k.excerpt.split('\n');
