@@ -517,3 +517,12 @@ test('two events that read alike are one case to judge', () => {
   assert.equal(c.waiting().tool.flat().length, 1);
   assert.equal(tally(c.result(), addAll).toConfirm, 2);
 });
+
+test('one quote read two ways (with no cases, then with a when) is one rule, counted as first read', () => {
+  const vague = rule({ quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment', trigger: 'committing' });
+  assert.equal(vague.id, commit.id);
+  const c = feed([start(), files({ '/r/A.md': 'A' }), files({ '/r/B.md': 'B' }), bash('git commit -m x')], { A: [vague], B: [commit] },
+    {}, unjudged);
+  assert.deepEqual(c.waiting().judgment, []);
+  assert.equal(c.result().rules.find((x) => x.id === commit.id)!.reason, 'no case to judge it on');
+});

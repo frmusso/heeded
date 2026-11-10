@@ -334,12 +334,15 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           tallies.set(rule.id, t);
         }
         t.files.add(file.path);
-        if (!ids.has(rule.id) && !rule.demoted && !rule.noCases) {
+        // A quote read two ways (two versions of a section) is one rule: it is counted as it was first read, which its
+        // tally's check was compiled from.
+        const { demoted, noCases, kind, check } = t.rule;
+        if (!ids.has(rule.id) && !demoted && !noCases) {
           ids.add(rule.id);
-          if (rule.kind !== 'judgment') checked.push(t);
-          else if (rule.check?.reply === true) replying.push(t);
+          if (kind !== 'judgment') checked.push(t);
+          else if (check?.reply === true) replying.push(t);
           else {
-            const { field, when, ignoreCase } = rule.check!;
+            const { field, when, ignoreCase } = check!;
             const key = JSON.stringify([field, when?.tool, ignoreCase === true]);
             let group = groups.get(key);
             if (!group) groups.set(key, (group = { field, tool: t.compiled!.when.tool, whens: [] }));
