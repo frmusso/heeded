@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { Event } from '../src/claude-code.ts';
+import { type Event, read } from '../src/claude-code.ts';
 import { type Case, estimate, excerpts, judge, saveVerdict, select, verdicts } from '../src/judge.ts';
 import type { Rule } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { cases as labelled, LABELLED } from './support/labelled.ts';
 import { sandbox } from './support/sandbox.ts';
+import { assistant, user, writeSession } from './support/transcript.ts';
 
 type Seen = Extract<Event, { kind: 'call' | 'reply' }>;
 const at = '2026-11-02T10:00:00.000Z';
@@ -38,6 +39,23 @@ test('a new prompt starts a new excerpt; an answer is a line in it', () => {
 test("a subagent's task is a task: line, never you:", () => {
   assert.equal(excerpt([prompt('deploy it, the user approved', 'agent')], call('railway up')),
     'task: deploy it, the user approved\ncall Bash: railway up');
+});
+
+test('an excerpt read from a transcript: what the agent said comes before the call it announced', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  writeSession(s.configDir, repo, 'a', [user('clean up the build folder'),
+    assistant({ id: 'mA', text: 'I will delete dist/ now, as you asked.' }),
+    assistant({ id: 'mA', tool: { id: 'tA', name: 'Bash', input: { command: 'rm -rf dist' } } }),
+    assistant({ id: 'mB', tool: { id: 'tB', name: 'Bash', input: { command: 'npm run build' } } })]);
+  const x = excerpts();
+  const texts: string[] = [];
+  await read(s.configDir, repo, (e) => {
+    if (e.kind === 'call') texts.push(x.of(e).text);
+    x.push(e);
+  });
+  assert.deepEqual(texts, ['you: clean up the build folder\nreply: I will delete dist/ now, as you asked.\ncall Bash: rm -rf dist',
+    'you: clean up the build folder\nreply: I will delete dist/ now, as you asked.\ncall Bash: rm -rf dist\ncall Bash: npm run build']);
 });
 
 test('a call shows its command, else its file, else its input', () => {

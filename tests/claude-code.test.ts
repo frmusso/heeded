@@ -139,7 +139,7 @@ test('a line without usage keeps the depth last seen', async () => {
   assert.deepEqual((await events(s.configDir, repo)).map((e) => e.kind === 'call' && e.depth), [false, 60, 60]);
 });
 
-test("the text blocks of one message are one reply, out when the message ends; subagents' replies are not read", async () => {
+test("the text blocks of one message are one reply, out before its calls; subagents' replies are not read", async () => {
   const s = sandbox();
   const repo = join(s.root, 'repo');
   const at = (t: string, line: object) => ({ ...line, timestamp: `2026-11-02T10:00:0${t}.000Z` });
@@ -151,8 +151,8 @@ test("the text blocks of one message are one reply, out when the message ends; s
   const call = { kind: 'call', id: 'tu1', tool: 'Bash', input: { command: 'ls' }, at: '2026-11-02T10:00:03.000Z', depth: 6, compactions: 0 };
   assert.deepEqual(await events(s.configDir, repo), [
     { kind: 'transcript', session: 'a', agent: null },
-    call,
     { kind: 'reply', id: 'm1', text: 'first\nsecond', at: '2026-11-02T10:00:01.000Z', depth: 6, compactions: 0 },
+    call,
     { kind: 'reply', id: 'm2', text: 'third', at: '2026-11-02T10:00:04.000Z', depth: 15, compactions: 0 },
     { kind: 'transcript', session: 'a', agent: 'x1' },
     call,
@@ -248,14 +248,14 @@ test('a line whose time is not a date is skipped', async () => {
   assert.deepEqual((await events(s.configDir, repo)).map((e) => e.kind), ['transcript']);
 });
 
-test('text, a tool call, then more text in one message: one reply with both texts', async () => {
+test('text, a tool call, then more text in one message: a reply before the call, another after it', async () => {
   const s = sandbox();
   const repo = join(s.root, 'repo');
   const tool = { id: 'tu1', name: 'Bash', input: { command: 'ls' } };
   writeSession(s.configDir, repo, 'a', [assistant({ id: 'm1', text: 'one' }), assistant({ id: 'm1', tool }),
-    assistant({ id: 'm1', text: 'two' })]);
-  const replies = (await events(s.configDir, repo)).filter((e) => e.kind === 'reply');
-  assert.deepEqual(replies.map((e) => e.kind === 'reply' && e.text), ['one\ntwo']);
+    assistant({ id: 'm1', text: 'two' }), assistant({ id: 'm2', text: 'three' })]);
+  const said = (await events(s.configDir, repo)).slice(1).map((e) => (e.kind === 'reply' ? `${e.id} ${e.text}` : e.kind));
+  assert.deepEqual(said, ['m1 one', 'call', 'm1/1 two', 'm2 three']);
 });
 
 test("a session's folder or subagents folder that is a symlink is not followed", async () => {

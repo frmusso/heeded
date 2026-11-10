@@ -47,9 +47,13 @@ const isFile = (f: unknown): f is InstructionFile => typeof f === 'object' && f 
   && typeof (f as InstructionFile).path === 'string' && typeof (f as InstructionFile).type === 'string'
   && typeof (f as InstructionFile).content === 'string';
 
-/** What a transcript's earlier lines tell its later ones; `reply` is the message being written, until it ends; `asked`
- * the ids of the calls whose result is the user's answer. */
-interface State { compactions: number; replace: boolean; depth: number; replies: boolean; reply: Reply | null; asked: Set<string> }
+/** What a transcript's earlier lines tell its later ones; `reply` is what the agent is saying, until it calls a tool or
+ * another message starts; `parts`, how many replies of message `of` were already out; `asked`, the ids of the calls
+ * whose result is the user's answer. */
+interface State {
+  compactions: number; replace: boolean; depth: number; replies: boolean; reply: Reply | null; of: string; parts: number;
+  asked: Set<string>;
+}
 
 /** The tools whose result is what the user answered: a choice among options, a plan approved or not. */
 const ASKING = new Set(['AskUserQuestion', 'ExitPlanMode']);
@@ -95,14 +99,22 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
     for (const b of m.content) {
       // Replies are what the user reads: a subagent's text goes to the agent that called it.
       if (b?.type === 'text' && typeof b.text === 'string' && typeof m.id === 'string' && state.replies) {
-        if (state.reply?.id === m.id) {
+        if (state.reply && state.of === m.id) {
           state.reply.text += `\n${b.text}`;
         } else {
           flush(state, out);
-          state.reply = { kind: 'reply', id: m.id, text: b.text, at: o.timestamp, depth: state.depth, compactions: state.compactions };
+          if (state.of !== m.id) [state.of, state.parts] = [m.id, 0];
+          // A message's text after one of its calls is a reply of its own.
+          const id = state.parts ? `${m.id}/${state.parts}` : m.id;
+          state.reply = { kind: 'reply', id, text: b.text, at: o.timestamp, depth: state.depth, compactions: state.compactions };
         }
       } else if (b?.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string' && isObject(b.input)) {
         if (ASKING.has(b.name)) state.asked.add(b.id);
+        // What the agent said goes out before the call it said it before.
+        if (state.reply) {
+          flush(state, out);
+          if (state.of === m.id) state.parts++;
+        }
         out({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions });
       }
     }
@@ -153,7 +165,7 @@ async function readFile(path: string, session: string, agent: string | null, ins
   const held: Event[] = [];
   if (decided) emit({ kind: 'transcript', session, agent });
   const out = (e: Event) => (decided ? emit(e) : held.push(e));
-  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null, asked: new Set() };
+  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null, of: '', parts: 0, asked: new Set() };
   let total = 0;
   let bad = 0;
   let messages = false;
