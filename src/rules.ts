@@ -93,8 +93,10 @@ function demotion(rule: Rule): string | undefined {
   const call = (e: Example) => verdict(compiled, e.tool, compiled.field === undefined ? {} : { [compiled.field]: e.value });
   const breaks = rule.breaking.find((e) => call(e) !== 'broken');
   if (breaks) return `failed its examples: breaks "${breaks.value}"`;
-  const keeps = rule.keeping.find((e) => call(e) !== 'kept');
+  // A keeping example may be a near miss the rule doesn't apply to (a search for the forbidden word); none may break it.
+  const keeps = rule.keeping.find((e) => call(e) === 'broken');
   if (keeps) return `failed its examples: keeps "${keeps.value}"`;
+  if (!rule.keeping.some((e) => call(e) === 'kept')) return 'failed its examples: none of the keeping examples applies';
 }
 
 /** A section's rules as the extraction returned them, or null when they were never read (or the file is damaged). */

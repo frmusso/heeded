@@ -93,7 +93,10 @@ test('a tool rule failing one of its own examples is demoted, naming it', () => 
   assert.equal(verify({ ...gitAdd, breaking: [...gitAdd.breaking, bash('git add -u')] }, section)!.demoted,
     'failed its examples: breaks "git add -u"');
   assert.equal(verify({ ...gitAdd, keeping: [bash('git add -A')] }, section)!.demoted, 'failed its examples: keeps "git add -A"');
-  assert.equal(verify({ ...gitAdd, keeping: [bash('ls')] }, section)!.demoted, 'failed its examples: keeps "ls"');
+  assert.equal(verify({ ...gitAdd, keeping: [bash('ls')] }, section)!.demoted,
+    'failed its examples: none of the keeping examples applies');
+  assert.equal(verify({ ...gitAdd, keeping: [...gitAdd.keeping, bash('grep -n "git add -A" notes.md')] }, section)!.demoted,
+    undefined);
 });
 
 test('a language rule outside the six languages heeded detects is demoted', () => {

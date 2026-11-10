@@ -1,6 +1,7 @@
 // Applying rules to events: tool checks and, for replies, their language; counting what was kept and broken.
 import type { Event, InstructionFile } from './claude-code.ts';
 import { redact } from './redact.ts';
+import { commands, type Simple } from './shell.ts';
 import type { Rule, Section } from './rules.ts';
 
 /** The most common words of each language a reply can be detected in. */
@@ -54,15 +55,18 @@ export function language(text: string): string | null {
   return first && first[1] >= 5 && first[1] >= 2 * (second?.[1] ?? 0) ? first[0] : null;
 }
 
-/** A tool rule as the extraction writes it: regular expressions over the tool's name and one input field. */
+/**
+ * A tool rule as the extraction writes it: regular expressions over the tool's name and one input field. A shell
+ * `command` is read one simple command at a time: `value` patterns see what it does, `data` patterns what it carries.
+ */
 export interface Check {
   field?: string;
-  when?: { tool?: string; value?: string };
-  broken?: { tool?: string; value?: string };
+  when?: { tool?: string; value?: string; data?: string };
+  broken?: { tool?: string; value?: string; data?: string };
   ignoreCase?: boolean;
 }
 
-interface Patterns { tool?: RegExp; value?: RegExp }
+interface Patterns { tool?: RegExp; value?: RegExp; data?: RegExp }
 interface Compiled { field?: string; when: Patterns; broken: Patterns }
 
 /**
@@ -92,11 +96,12 @@ function exponential(source: string): boolean {
  * calls) nor `u` (model-written patterns often escape characters it rejects); `i` only when the check asks.
  */
 export function compile(check: Check): Compiled | string {
-  if (check.broken?.tool === undefined && check.broken?.value === undefined) return 'no broken pattern';
+  const b = check.broken;
+  if (b?.tool === undefined && b?.value === undefined && b?.data === undefined) return 'no broken pattern';
   const flags = check.ignoreCase ? 'i' : '';
   const compiled: Compiled = { field: check.field, when: {}, broken: {} };
   for (const part of ['when', 'broken'] as const) {
-    for (const key of ['tool', 'value'] as const) {
+    for (const key of ['tool', 'value', 'data'] as const) {
       const source = check[part]?.[key];
       if (source === undefined) continue;
       if (exponential(source)) return `regex may take exponential time: ${source}`;
@@ -110,14 +115,47 @@ export function compile(check: Check): Compiled | string {
   return compiled;
 }
 
-/** Whether the rule applies to a call and, when it does, whether the call broke it. A value is matched on its first
- * 4,096 characters: model-written patterns over a huge command or file stay cheap. */
+// The last command line read: every rule in effect looks at the same call in turn.
+let last: { line: string; views: Simple[] } | undefined;
+
+/** What a check's field shows: one view per simple command of a shell `command`, else the value whole; none when the
+ * check has no field or the call's field isn't a string. */
+function views(c: Compiled, input: Record<string, unknown>): Simple[] {
+  const value = c.field === undefined ? undefined : input[c.field];
+  if (typeof value !== 'string') return [];
+  if (c.field !== 'command') return [{ does: value, carries: '', text: value }];
+  if (last?.line !== value) last = { line: value, views: commands(value) };
+  return last.views;
+}
+
+/** Each view is matched on its first 4,096 characters: model-written patterns over a huge command or file stay cheap. */
+const hits = (p: Patterns, v: Simple) => (!p.value || p.value.test(v.does.slice(0, 4096)))
+  && (!p.data || p.data.test(v.carries.slice(0, 4096)));
+const needs = (p: Patterns) => p.value !== undefined || p.data !== undefined;
+
+/**
+ * Whether the rule applies to a call and, when it does, the view that broke it: the call applies when its tool
+ * matches and one view matches `when`; it is broken when, besides, that same view matches `broken`.
+ */
+function judge(c: Compiled, tool: string, input: Record<string, unknown>): { verdict: 'none' | 'kept' | 'broken'; by?: Simple } {
+  if (c.when.tool && !c.when.tool.test(tool)) return { verdict: 'none' };
+  const all = views(c, input);
+  const applying = needs(c.when) ? all.filter((v) => hits(c.when, v)) : all;
+  if (needs(c.when) && !applying.length) return { verdict: 'none' };
+  if (c.broken.tool && !c.broken.tool.test(tool)) return { verdict: 'kept' };
+  if (!needs(c.broken)) return { verdict: 'broken' };
+  const by = applying.find((v) => hits(c.broken, v));
+  return by ? { verdict: 'broken', by } : { verdict: 'kept' };
+}
+
 export function verdict(c: Compiled, tool: string, input: Record<string, unknown>): 'none' | 'kept' | 'broken' {
-  const field = c.field === undefined ? undefined : input[c.field];
-  const value = typeof field === 'string' ? field.slice(0, 4096) : undefined;
-  const matches = (p: Patterns) => (!p.tool || p.tool.test(tool)) && (!p.value || (value !== undefined && p.value.test(value)));
-  if (!matches(c.when)) return 'none';
-  return matches(c.broken) ? 'broken' : 'kept';
+  return judge(c, tool, input).verdict;
+}
+
+/** What broke the rule, as written: the simple command, the field's value, or the tool when the check has no field. */
+export function culprit(c: Compiled, tool: string, input: Record<string, unknown>): string {
+  const value = c.field === undefined ? undefined : input[c.field];
+  return judge(c, tool, input).by?.text ?? (typeof value === 'string' ? value : tool);
 }
 
 interface Count { applied: number; broken: number }
@@ -168,14 +206,13 @@ interface Tally {
   rule: Rule; files: Set<string>; all: Count; after: Count; depth: Count[]; evidence: Evidence[]; compiled: Compiled | null;
 }
 
-/** A violation in one line, secrets redacted: a call's checked value (or its tool), a reply's language and first words. */
-function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, field: string | undefined, detected: string | null): string {
+/** A violation in one line, secrets redacted: what in the call broke the rule, a reply's language and first words. */
+function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, c: Compiled | null, detected: string | null): string {
   if (e.kind === 'reply') {
     const words = redact(e.text).split(/[\p{Cc}\s]+/u).filter(Boolean);
     return `${detected}: "${words.slice(0, 8).join(' ')}${words.length > 8 ? ' …' : ''}"`;
   }
-  const value = field === undefined ? undefined : e.input[field];
-  const line = redact(typeof value === 'string' ? value : e.tool).replace(/[\p{Cc}\s]+/gu, ' ').trim();
+  const line = redact(culprit(c!, e.tool, e.input)).replace(/[\p{Cc}\s]+/gu, ' ').trim();
   return line.length > 200 ? `${line.slice(0, 200)}…` : line;
 }
 
@@ -258,7 +295,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
           add(t.all, v === 'broken');
           if (e.compactions > 0) add(t.after, v === 'broken');
           add(t.depth[DEPTHS.findLastIndex((d) => e.depth >= d)], v === 'broken');
-          if (v === 'broken') t.evidence.push({ at: e.at, session, agent, text: evidence(e, t.compiled?.field, detected ?? null) });
+          if (v === 'broken') t.evidence.push({ at: e.at, session, agent, text: evidence(e, t.compiled, detected ?? null) });
         }
       }
     },

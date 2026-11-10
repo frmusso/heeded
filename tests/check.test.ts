@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type Check, compile, counter, type Data, language, verdict } from '../src/check.ts';
+import { type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
 import { type Rule, type Section, sections, verify } from '../src/rules.ts';
 
@@ -46,6 +46,39 @@ test('case is ignored only when the check says so', () => {
 test('the same call gets the same verdict every time', () => {
   const c = compiled(gitAdd);
   for (let i = 0; i < 3; i++) assert.equal(verdict(c, 'Bash', { command: 'git add -A' }), 'broken');
+});
+
+test('a shell command is checked one simple command at a time, on what it does', () => {
+  const kill = compiled({ field: 'command', when: { tool: '^Bash$' }, broken: { value: '\\b(kill|pkill|killall)\\b.*billingd' } });
+  const store = compiled({ field: 'command', when: { tool: '^Bash$' }, broken: { value: 'store-submit' } });
+  const force = compiled({ field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+push\\b' }, broken: { value: '\\s(--force|-f)\\b' } });
+  const bash = (c: ReturnType<typeof compiled>, command: string) => verdict(c, 'Bash', { command });
+  assert.equal(bash(kill, "cat > t.ts <<'EOF'\ntest('kill billingd', () => {});\nEOF"), 'kept');
+  assert.equal(bash(kill, 'echo "pkill billingd" >> notes.md'), 'kept');
+  assert.equal(bash(store, 'grep -n "store-submit" docs/*.md'), 'kept');
+  assert.equal(bash(force, 'git commit -m "never --force"'), 'none');
+  assert.equal(bash(force, 'git push && rm -f x'), 'kept');
+  assert.equal(bash(kill, 'pkill billingd'), 'broken');
+  assert.equal(bash(kill, "ssh host 'pkill billingd'"), 'broken');
+  assert.equal(bash(force, 'git push --force'), 'broken');
+  assert.equal(bash(force, 'cd x && git push -f origin main'), 'broken');
+  assert.equal(culprit(force, 'Bash', { command: 'cd x && git push -f origin main' }), 'git push -f origin main');
+});
+
+test('what a command carries is checked with data patterns: a commit message, in both forms', () => {
+  const coauthor = compiled({ field: 'command', when: { tool: '^Bash$', value: '^git\\s+commit\\b' }, broken: { data: 'Co-Authored-By' } });
+  const bash = (command: string) => verdict(coauthor, 'Bash', { command });
+  assert.equal(bash('git commit -m "fix: x\n\nCo-Authored-By: Claude"'), 'broken');
+  assert.equal(bash(`git commit -m "$(cat <<'EOF'\nfix: x\n\nCo-Authored-By: Claude\nEOF\n)"`), 'broken');
+  assert.equal(bash('git commit -m "fix: x"'), 'kept');
+  assert.equal(bash('echo "Co-Authored-By: Claude"'), 'none');
+  assert.equal(compile({ field: 'command', broken: { data: '(a+)+' } }), 'regex may take exponential time: (a+)+');
+});
+
+test('a field other than command is matched whole, as written', () => {
+  const env = compiled({ field: 'file_path', when: { tool: '^(Edit|Write)$' }, broken: { value: '\\.env$' } });
+  assert.equal(verdict(env, 'Write', { file_path: '/a/b && c/.env' }), 'broken');
+  assert.equal(culprit(env, 'Write', { file_path: '/a/b && c/.env' }), '/a/b && c/.env');
 });
 
 test('a value is matched on its first 4,096 characters', () => {
@@ -223,7 +256,7 @@ test('evidence of each violation: latest first, one line, secrets redacted, with
   { A: [addAll, italian] });
   assert.deepEqual(data.rules.find((r) => r.id === addAll.id)!.evidence, [
     { at: '2026-11-04T08:00:00Z', session: 's1', agent: 'x1', text: 'git add --all' },
-    { at: '2026-11-02T10:00:00Z', session: 's1', agent: null, text: 'git add -A && echo …' },
+    { at: '2026-11-02T10:00:00Z', session: 's1', agent: null, text: 'git add -A' },
     { at: '2026-11-01T10:00:00Z', session: 's1', agent: null, text: `${long.slice(0, 200)}…` },
   ]);
   assert.deepEqual(data.rules.find((r) => r.id === italian.id)!.evidence, [
