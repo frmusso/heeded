@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 export type Line = Record<string, unknown>;
 
-export interface File { path: string; type: string; content: string }
+interface File { path: string; type: string; content: string }
 
 export const instructions = (files: File[]): Line => ({ type: 'attachment', attachment: { type: 'instructions', files } });
 export const nested = (file: File): Line => ({
@@ -19,7 +19,7 @@ export const summary = (): Line => ({
   type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous one.' },
 });
 export const user = (text: string): Line => ({ type: 'user', message: { role: 'user', content: text } });
-export interface Tool { id: string; name: string; input: Record<string, unknown> }
+interface Tool { id: string; name: string; input: Record<string, unknown> }
 
 /** One line of an assistant message: Claude Code writes each content block of a message on a line of its own. */
 export const assistant = ({ id, text, tool, usage }: { id: string; text?: string; tool?: Tool; usage?: Record<string, number> }): Line => ({

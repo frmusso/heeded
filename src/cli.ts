@@ -24,7 +24,7 @@ reads CLAUDE_CONFIG_DIR, else ~/.claude. caches rules in XDG_CACHE_HOME, else ~/
 `;
 
 /** What the command needs from its process, so tests can drive every path in-process. */
-export interface IO {
+interface IO {
   env: NodeJS.ProcessEnv;
   cwd: string;
   /** Whether a question can be asked: stdin and stderr are terminals. */
@@ -83,9 +83,9 @@ export async function main(argv: string[], io: IO): Promise<number> {
   let code = 0;
   // Reading new sections spends the user's quota: only when asked on a terminal, after the estimate.
   if (missing.length && io.terminal) {
-    const { tokens } = estimate(missing);
-    const k = tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
-    io.err(`${plural(missing.length, 'rule section')} not read yet · claude sonnet · ~${k} tokens\n`);
+    // Every call costs ~4k tokens: the estimate is never under a thousand.
+    const k = Math.round(estimate(missing).tokens / 1000);
+    io.err(`${plural(missing.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
     if (/^y(es)?$/i.test((await io.ask('read them now? [y/N] ')).trim())) {
       const found = await extract(missing, io.env);
       for (const [hash, list] of found.rules) save(cacheDir, hash, list);

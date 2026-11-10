@@ -63,7 +63,7 @@ export interface Check {
 }
 
 interface Patterns { tool?: RegExp; value?: RegExp }
-export interface Compiled { field?: string; when: Patterns; broken: Patterns }
+interface Compiled { field?: string; when: Patterns; broken: Patterns }
 
 /** A group holding a quantifier, itself quantified — `(a+)+`, `(\\w+\\s?)*` — can take exponential time on a long value. */
 const NESTED = /\((?:[^()\\]|\\.)*[*+}](?:[^()\\]|\\.)*\)[*+{]/;

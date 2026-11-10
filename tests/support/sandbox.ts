@@ -17,5 +17,5 @@ export function sandbox() {
   mkdirSync(bin);
   symlinkSync(process.execPath, join(bin, 'node'));
   const env = { HOME: home, CLAUDE_CONFIG_DIR: configDir, XDG_CACHE_HOME: cacheDir, TZ: 'UTC', PATH: bin };
-  return { root, home, configDir, cacheDir, bin, env };
+  return { root, configDir, cacheDir, bin, env };
 }
