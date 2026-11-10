@@ -48,7 +48,8 @@ test('the judge on the labelled set: no false broken, recall 80% or more', { ski
     t.diagnostic(`precision on broken ${precision.toFixed(2)} · recall ${recall.toFixed(2)} · ${result.tokens} tokens`
       + ` (estimate ${estimate(list).tokens})`);
     for (const [i, l] of LABELLED.entries()) {
-      if (said[i] !== l.expected) t.diagnostic(`${l.expected} judged ${said[i]}: ${l.excerpt.split('\n').at(-1)}`);
+      const [first, ...rest] = l.excerpt.split('\n');
+      if (said[i] !== l.expected) t.diagnostic(`case ${i + 1}, ${l.expected} judged ${said[i]}: ${first} … ${rest.at(-1)}`);
     }
     assert.deepEqual(result.errors, []);
     assert.equal(precision, 1);
