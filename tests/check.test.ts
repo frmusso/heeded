@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type Check, compile, language, verdict } from '../src/check.ts';
+import { type Check, compile, counter, type Data, language, verdict } from '../src/check.ts';
+import type { Event } from '../src/claude-code.ts';
+import { type Rule, type Section, sections, verify } from '../src/rules.ts';
 
 function compiled(check: Check) {
   const c = compile(check);
@@ -116,4 +118,154 @@ test('a reply of names and terms with few common words: no verdict', () => {
   const text = 'Parser sistemato: test verdi, build pulita, lint ok, typecheck ok, budget rispettati, pacchetto piccolo, avvio '
     + 'rapido, memoria bassa, throughput alto, tutto pronto per la review.';
   assert.equal(language(text), null);
+});
+
+// Counting: events fed in, as the adapter emits them, over rules verified from their own quotes.
+const rule = (raw: Record<string, unknown>) => verify(raw, sections(raw.quote as string)[0])!;
+const bashRule = (quote: string, name: string, broken: string, breaking: string, keeping: string) => rule({
+  quote, name, kind: 'tool', trigger: 'running commands',
+  check: { field: 'command', when: { tool: '^Bash$' }, broken: { value: broken } },
+  breaking: [{ tool: 'Bash', value: breaking }], keeping: [{ tool: 'Bash', value: keeping }],
+});
+const addAll = rule({
+  quote: 'never `git add -A`', name: 'never git add -A', kind: 'tool', trigger: 'staging files with git',
+  check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+add\\b' }, broken: { value: '\\s(-A|--all)\\b' } },
+  breaking: [{ tool: 'Bash', value: 'git add -A' }], keeping: [{ tool: 'Bash', value: 'git add a.ts' }],
+});
+const italian = rule({ quote: 'talk to the user in italian', name: 'talk in italian', kind: 'language', trigger: 'replying',
+  check: { language: 'it' } });
+const IT = 'Ho controllato il test che fallisce e il problema è nel parser. Legge tutto il file in memoria, quindi si rompe con '
+  + 'input grandi. Adesso lo cambio per leggere le righe una alla volta e poi rilancio i test.';
+const EN = 'I checked the failing test and the problem is in the parser. It reads the whole file into memory, so it breaks '
+  + 'on large inputs. I will change it to stream the lines and run the tests again.';
+
+/** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */
+function count(events: Event[], rulesBy: Record<string, Rule[]>, missingBy: Record<string, Section[]> = {}): Data {
+  const c = counter((f) => ({ rules: rulesBy[f.content] ?? [], missing: missingBy[f.content] ?? [] }));
+  for (const e of events) c.on(e);
+  return c.result();
+}
+const start = (session = 's1', agent: string | null = null): Event => ({ kind: 'transcript', session, agent });
+const files = (paths: Record<string, string>, replace = false): Event =>
+  ({ kind: 'instructions', files: Object.entries(paths).map(([path, content]) => ({ path, type: 'Project', content })), replace });
+let ids = 0;
+type When = { id?: string; at?: string; depth?: number; compactions?: number };
+const bash = (command: string, w: When = {}): Event => ({ kind: 'call', id: w.id ?? `tu${++ids}`, tool: 'Bash', input: { command },
+  at: w.at ?? '2026-11-02T10:00:00Z', depth: w.depth ?? 0, compactions: w.compactions ?? 0 });
+const reply = (text: string, w: When = {}): Event => ({ kind: 'reply', id: w.id ?? `m${++ids}`, text,
+  at: w.at ?? '2026-11-02T10:00:00Z', depth: w.depth ?? 0, compactions: w.compactions ?? 0 });
+const counts = (data: Data, r: Rule) => {
+  const found = data.rules.find((x) => x.id === r.id);
+  return found && { status: found.status, applied: found.applied, broken: found.broken };
+};
+
+test('a tool rule: the calls it applies to, and the ones that broke it', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A'), bash('git add a.ts'), bash('ls')], { A: [addAll] });
+  assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 2, broken: 1 });
+});
+
+test('a language rule: replies of 20 words or more, never calls', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), reply(IT), reply(EN), reply('ok, fatto.'), bash('git add -A')],
+    { A: [italian] });
+  assert.deepEqual(counts(data, italian), { status: 'broken', applied: 2, broken: 1 });
+});
+
+test('the rules in effect follow the files: an edit from that point, a replace drops files not sent again, a nested file adds', () => {
+  const data = count([
+    start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A'),
+    files({ '/r/CLAUDE.md': 'none' }), bash('git add -A'),
+    files({ '/r/sub/CLAUDE.md': 'A' }), bash('git add -A'),
+    files({ '/r/CLAUDE.local.md': 'B' }, true), bash('git add -A'), reply(IT),
+  ], { A: [addAll], B: [italian] });
+  assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 2, broken: 2 });
+  assert.deepEqual(counts(data, italian), { status: 'kept', applied: 1, broken: 0 });
+});
+
+test('a subagent that recorded no instructions counts nothing; a new session starts with none', () => {
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A'), start('s1', 'x1'), bash('git add -A'),
+    start('s2'), bash('git add -A')], { A: [addAll] });
+  assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 1, broken: 1 });
+});
+
+test('a call or a reply copied into another transcript (a resumed or forked session) counts once', () => {
+  const events = (s: string) => [start(s), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A', { id: 'tu-x' }), reply(EN, { id: 'm-x' })];
+  const data = count([...events('s1'), ...events('s2')], { A: [addAll, italian] });
+  assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 1, broken: 1 });
+  assert.deepEqual(counts(data, italian), { status: 'broken', applied: 1, broken: 1 });
+});
+
+test('after compaction, and by context depth: per rule and summed', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }),
+    bash('git add -A', { depth: 50_000 }), bash('git add a.ts', { depth: 150_000, compactions: 1 }),
+    bash('git add -A', { depth: 300_000, compactions: 1 }), bash('git add --all', { depth: 450_000, compactions: 2 }),
+    reply(IT, { depth: 99_999 }), reply(EN, { depth: 100_000 })], { A: [addAll, italian] });
+  const r = data.rules.find((x) => x.id === addAll.id)!;
+  assert.deepEqual(r.afterCompaction, { applied: 3, broken: 2 });
+  assert.deepEqual(r.byDepth, [
+    { from: 0, to: 100_000, applied: 1, broken: 1 }, { from: 100_000, to: 200_000, applied: 1, broken: 0 },
+    { from: 200_000, to: 400_000, applied: 1, broken: 1 }, { from: 400_000, to: null, applied: 1, broken: 1 },
+  ]);
+  assert.deepEqual(data.byDepth, [
+    { from: 0, to: 100_000, applied: 2, broken: 1 }, { from: 100_000, to: 200_000, applied: 2, broken: 1 },
+    { from: 200_000, to: 400_000, applied: 1, broken: 1 }, { from: 400_000, to: null, applied: 1, broken: 1 },
+  ]);
+});
+
+test('evidence of each violation: latest first, one line, secrets redacted, with its session and agent', () => {
+  const key = `sk-${'ant-api03-Zx9_Qw8-Er7Ty6Ui5Op4'}`;
+  const long = `git add -A ${'x'.repeat(300)}`;
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'A' }),
+    bash(`git add -A &&\n  echo ${key}`, { at: '2026-11-02T10:00:00Z' }), reply(EN, { at: '2026-11-03T09:00:00Z' }),
+    bash(long, { at: '2026-11-01T10:00:00Z' }), bash('git add a.ts'),
+    start('s1', 'x1'), files({ '/r/CLAUDE.md': 'A' }), bash('git add --all', { at: '2026-11-04T08:00:00Z' })],
+  { A: [addAll, italian] });
+  assert.deepEqual(data.rules.find((r) => r.id === addAll.id)!.evidence, [
+    { at: '2026-11-04T08:00:00Z', session: 's1', agent: 'x1', text: 'git add --all' },
+    { at: '2026-11-02T10:00:00Z', session: 's1', agent: null, text: 'git add -A && echo …' },
+    { at: '2026-11-01T10:00:00Z', session: 's1', agent: null, text: `${long.slice(0, 200)}…` },
+  ]);
+  assert.deepEqual(data.rules.find((r) => r.id === italian.id)!.evidence, [
+    { at: '2026-11-03T09:00:00Z', session: 's1', agent: null, text: 'en: "I checked the failing test and the problem …"' },
+  ]);
+});
+
+const gitRule = (quote: string, when: string, broken: string, breaking: string, keeping: string) => rule({
+  quote, name: quote, kind: 'tool', trigger: 'running commands',
+  check: { field: 'command', when: { tool: '^Bash$', value: when }, broken: { value: broken } },
+  breaking: [{ tool: 'Bash', value: breaking }], keeping: [{ tool: 'Bash', value: keeping }],
+});
+
+test("each rule's status, in the report's order: broken by kept share, kept, never applied, judgment, demoted", () => {
+  const push = gitRule('never force-push', '\\bgit\\s+push\\b', '--force', 'git push --force', 'git push');
+  const rm = gitRule('never rm -rf', '\\brm\\b', '-rf', 'rm -rf /', 'rm a.txt');
+  const kill = gitRule('never kill billing', '\\bkill\\b', 'billing', 'kill -9 billing', 'kill 42');
+  const judge = rule({ quote: 'write a failing test first', name: 'failing test first', kind: 'judgment', trigger: 'coding' });
+  const demoted = bashRule('never sudo', 'never sudo', '^sudo', 'please sudo', 'ls');
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git push'), bash('git push --force'), bash('rm a.txt'),
+    bash('git add -A')], { A: [judge, demoted, kill, rm, push, addAll] });
+  assert.deepEqual(data.rules.map((r) => [r.name, r.status, r.reason]), [
+    ['never git add -A', 'broken', undefined], ['never force-push', 'broken', undefined], ['never rm -rf', 'kept', undefined],
+    ['never kill billing', 'never-applied', undefined], ['failing test first', 'judgment', undefined],
+    ['never sudo', 'demoted', 'failed its examples: breaks "please sudo"'],
+  ]);
+  assert.equal(data.rules[3].tokens, 5);
+});
+
+test('the same rule in two files is one rule, from both files', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A', '/r/.claude/worktrees/w/CLAUDE.md': 'A2' }), bash('git add -A')],
+    { A: [addAll], A2: [addAll] });
+  assert.equal(data.rules.length, 1);
+  assert.deepEqual(data.rules[0].files, ['/r/CLAUDE.md', '/r/.claude/worktrees/w/CLAUDE.md']);
+  assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 1, broken: 1 });
+});
+
+test('the totals: sections not read yet, the files with rules, sessions, subagents, the time span', () => {
+  const missing = [{ path: [], text: 'a', hash: 'h1' }, { path: [], text: 'b', hash: 'h2' }];
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'A', '/r/CLAUDE.local.md': 'M', '/m/MEMORY.md': 'E' }),
+    bash('ls', { at: '2026-11-03T10:00:00Z' }), start('s1', 'x1'), files({ '/r/CLAUDE.local.md': 'M' }),
+    reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' })],
+  { A: [addAll] }, { M: missing });
+  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2,
+    files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md'], sessions: 2, subagents: 1, from: '2026-11-01T09:00:00Z',
+    to: '2026-11-05T08:00:00Z' });
 });
