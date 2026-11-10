@@ -143,3 +143,23 @@ test('the same text under two paths is sent once, and remembered for both', asyn
     assert.deepEqual(older.rules.map((r) => r.quote), ['never force-push'], path);
   }
 });
+
+test('the prompt asks for unconditional tool rules, whole words, near misses and judgment cases', async () => {
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  await extract(pending(section('- never run tsc')), env, s.cacheDir);
+  const { stdin } = calls()[0];
+  for (const words of ['is "judgment".', '(^|\\s)tsc(\\s|$)', 'git tag alone lists tags', '{ "reply": true }']) {
+    assert.ok(stdin.includes(words), words);
+  }
+  assert.ok(!stdin.includes('match the program with \\b'));
+  // Its regexes reach the model as written: a backslash is never an escape of the prompt's own.
+  for (const words of ['never with \\b: it matches inside paths', '(\\.lock$)', 'like \\S']) assert.ok(stdin.includes(words), words);
+  assert.ok(!stdin.includes('\x08'));
+});
+
+test('the schema lets a judgment rule find replies', async () => {
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  await extract(pending(section('- say what you changed')), env, s.cacheDir);
+  const check = JSON.parse(calls()[0].argv[6]).properties.sections.items.properties.rules.items.properties.check.properties;
+  assert.deepEqual(check.reply, { type: 'boolean' });
+});

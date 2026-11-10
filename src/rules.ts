@@ -8,7 +8,7 @@ import { ask, batches } from './model.ts';
 import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
-const PROMPT_VERSION = 2;
+const PROMPT_VERSION = 3;
 export const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
@@ -255,7 +255,7 @@ const SCHEMA = JSON.stringify({
                   type: 'object',
                   properties: {
                     field: { type: 'string' }, when: PATTERNS, broken: PATTERNS, ignoreCase: { type: 'boolean' },
-                    language: { type: 'string' },
+                    language: { type: 'string' }, reply: { type: 'boolean' },
                   },
                 },
                 breaking: EXAMPLES,
@@ -272,7 +272,8 @@ const SCHEMA = JSON.stringify({
   required: ['sections'],
 });
 
-const PROMPT = `You read the instruction files a coding agent (Claude Code) is given, and list the rules in them, so that a tool
+// Raw: the regexes in it reach the model as written.
+const PROMPT = String.raw`You read the instruction files a coding agent (Claude Code) is given, and list the rules in them, so that a tool
 can check later whether the agent followed each one. Below are sections of those files. Return every section by its id
 with the rules it states: an empty list when it states none. A rule tells the agent to do or not to do something;
 descriptions, explanations and context are not rules.
@@ -280,9 +281,10 @@ descriptions, explanations and context are not rules.
 For each rule:
 - quote: the rule's own words, copied exactly from the section: never reworded, typos and formatting (backticks) kept.
 - name: a summary of at most 40 characters, in the rule's own language.
-- kind: "tool" when a single tool call shows, without doubt, whether the rule was kept or broken; "language" for the
-  language the agent must use in its replies to the user (not in code, commits or files); "judgment" for everything
-  else.
+- kind: "tool" when a single tool call shows, without doubt and whatever came before it, whether the rule was kept or
+  broken; "language" for the language the agent must use in its replies to the user (not in code, commits or files);
+  "judgment" for everything else. A rule with an exception, or a condition one call can't show (the user's go or
+  request, being asked first, a folder or a sub-project, a time, before or after something else), is "judgment".
 - trigger: when the rule applies, in a few words ("staging files with git").
 
 A "language" rule has check: { "language": "<two-letter ISO 639-1 code>" }.
@@ -294,11 +296,12 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
 - field: the input field matched; left out to match on the tool name alone.
 - A "command" is read the way a shell reads it, one simple command at a time (split on &&, ||, ;, |, & and line
   breaks). "value" sees what a simple command does: its words, with quoted text emptied ('' and "" stay) and heredoc
-  bodies left out; it may start with assignments (CI=1), sudo, env, time or nohup, so match the program with \b, not
-  ^. "data" sees what it carries: its heredoc bodies, then its quoted texts, one per line, such as a commit message;
-  it is empty when there are none, and ^ and $ anchor the whole of it. A rule on a message's form needs a "data" in
-  "when" too, like \S, so a command without a message is not counted. What sh -c, bash -c, ssh, eval and $( … ) run
-  is read as commands too. Any other field is matched whole by "value".
+  bodies left out; it may start with assignments (CI=1), sudo, env, time or nohup. Match a program or a subcommand as
+  a whole word of the command, (^|\s)tsc(\s|$) or (^|\s)git\s+push(\s|$), never with \b: it matches inside paths and
+  hyphenated words (tsc-after.txt, git merge-base). "data" sees what it carries: its heredoc bodies, then its quoted
+  texts, one per line, such as a commit message; it is empty when there are none, and ^ and $ anchor the whole of it.
+  A rule on a message's form needs a "data" in "when" too, like \S, so a command without a message is not counted.
+  What sh -c, bash -c, ssh, eval and $( … ) run is read as commands too. Any other field is matched whole by "value".
 - when: the calls the rule is about: "tool", a regex over the tool name (anchored, like ^Bash$), and "value" and "data",
   regexes as above; any may be left out.
 - broken: what makes such a call break the rule: a "tool", "value" or "data" regex, at least one. For a command, when
@@ -307,8 +310,14 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
 - The regexes are JavaScript, without flags, and never repeat a group that holds a quantifier or an alternation, like
   (a+)+ or (a|b)+.
 - breaking: two or three example calls { "tool", "value" } that break the rule; keeping: two or three calls that keep
-  it, at least one the rule is about, and one near miss that names the forbidden thing without doing it (a search for
-  it, an echo of it, a commit message naming it). A value is the field's whole value: for Bash, a whole command line.
+  it, at least one the rule is about, and near misses chosen for the rule that must not break it: a path or a file
+  name holding the forbidden word, a read-only form of the command (git tag alone lists tags), its --help, a search or
+  an echo naming it. A value is the field's whole value: for Bash, a whole command line.
+
+A "judgment" rule has a check that finds the cases a judge will read: { "reply": true } for a rule about what the
+agent tells the user; else the calls it may be about, as a tool rule's "field" and "when", without "broken", and
+keeping: one or two calls it is about, which "when" must match. Leave the check out when no single call or reply is
+a case of the rule (how to plan, what to remember).
 `;
 
 /**
