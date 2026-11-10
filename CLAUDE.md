@@ -4,7 +4,7 @@ heeded measures whether coding agents follow their instruction files (`CLAUDE.md
 transcripts they leave on disk. this file is for anyone working on its code, and for their agents: [README.md](README.md)
 is for users. personal instructions go in `CLAUDE.local.md`, which git ignores.
 
-**status:** v1 implemented, not published yet.
+**status:** v2 implemented, not published yet.
 
 ## principles
 
@@ -54,27 +54,34 @@ is for users. personal instructions go in `CLAUDE.local.md`, which git ignores.
 
 ```text
 transcripts ──▶ claude-code.ts ──events──▶ check.ts (counter) ──▶ report.ts ──▶ text | rules | json
-                                              ▲
-instruction files (from the events) ──▶ rules.ts: sections → cache → verify;  new sections → claude -p
+                                              ▲         ⇅ cases waiting, verdicts
+instruction files (from the events) ──▶ rules.ts      judge.ts: select within the budget → claude -p → cache
+  sections → cache → verify; new sections → claude -p
 ```
 
 - `src/cli.ts`: arguments, the two commands, the question before spending, exit codes. `main(argv, io)` takes its
   process as `io`, so tests drive every path in-process.
 - `src/claude-code.ts`: the only module that knows claude code. finds the transcripts of the sessions run in a folder
   and streams them, one pass per file, into neutral events (`transcript`, `instructions`, `compaction`, `call`,
-  `reply`). another agent is another adapter emitting the same events.
-- `src/rules.ts`: instruction files into sections; the extraction call (`claude -p`, isolated, one per batch of new
-  sections); local verification of what it returns; the cache: one file per section hash, and per section the version
-  read last, whose rules its other versions take.
+  `reply`, `prompt`: the user's words, answers to the agent's questions included, or a subagent's task). another agent
+  is another adapter emitting the same events.
+- `src/rules.ts`: instruction files into sections; the extraction call (one per batch of new sections); local
+  verification of what it returns (a judgment rule's `when`, or why it has no cases); the cache: one file per section
+  hash, and per section the version read last, whose rules its other versions take.
+- `src/model.ts`: the user's own `claude -p`, isolated, with a schema: the call the extraction and the judge share.
+- `src/judge.ts`: a case's excerpt of its session, its key and cached verdict; the selection within a run's budget;
+  the judge call and the local check of its answer.
 - `src/shell.ts`: a shell command line read as a shell reads it, into simple commands, each with what it does and what
   it carries.
-- `src/check.ts`: tool checks, reply language, and the counter: events in, report data and the sections to read out.
+- `src/check.ts`: tool checks, reply language, and the counter: events in; report data, the sections to read and the
+  cases waiting for the judge out. a tool rule's candidate or a judgment rule's case counts by its verdict.
 - `src/report.ts`: the terminal report, `heeded rules`, the json document.
 - `src/redact.ts`: secrets out of anything sent or printed.
 - `scripts/public-tree.ts`: the guard that keeps private notes, notes on who decided what and personal data out of the
   tree.
-- `tests/`: one file per module, plus budgets, the live call and the guard. `tests/support/` holds the sandbox (every
-  root heeded reads, and a `PATH` with only a fake `claude`) and the synthetic transcript builder.
+- `tests/`: one file per module, plus budgets, the live calls and the guard. `tests/support/` holds the sandbox (every
+  root heeded reads, and a `PATH` with only a fake `claude`), the synthetic transcript builder and a labelled set of
+  cases for the judge.
 
 ## commands
 
@@ -88,5 +95,5 @@ node --test tests/rules.test.ts               # one file
 npm run typecheck
 npm run build                                 # dist/, what the package ships
 node scripts/public-tree.ts                   # the public-tree guard
-HEEDED_LIVE=1 node --test tests/live.test.ts  # the real claude call: a few cents
+HEEDED_LIVE=1 node --test tests/live.test.ts  # the real claude calls, extraction and judge: a few cents
 ```

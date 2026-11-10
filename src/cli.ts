@@ -21,7 +21,7 @@ options
   --json            the report as json
   --help, --version
 
-reads CLAUDE_CONFIG_DIR, else ~/.claude. caches rules in XDG_CACHE_HOME, else ~/.cache.
+reads CLAUDE_CONFIG_DIR, else ~/.claude. caches rules and verdicts in XDG_CACHE_HOME, else ~/.cache.
 `;
 
 /** What the command needs from its process, so tests can drive every path in-process. */
