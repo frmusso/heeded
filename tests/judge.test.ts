@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Event } from '../src/claude-code.ts';
-import { excerpts } from '../src/judge.ts';
+import { excerpts, saveVerdict, verdicts } from '../src/judge.ts';
+import { sandbox } from './support/sandbox.ts';
 
 type Seen = Extract<Event, { kind: 'call' | 'reply' }>;
 const at = '2026-11-02T10:00:00.000Z';
@@ -97,4 +100,17 @@ test('the key: the same excerpt the same key, another excerpt another', () => {
   assert.match(a, /^[0-9a-f]{64}$/);
   assert.equal(key([prompt('fix it')], call('git push')), a);
   assert.notEqual(key([prompt('fix it, then push')], call('git push')), a);
+});
+
+test('a verdict saved loads back; a missing folder, a missing or damaged file loads as nothing', () => {
+  const s = sandbox();
+  assert.equal(verdicts(s.cacheDir)('r-k'), null);
+  saveVerdict(s.cacheDir, 'r-k', { verdict: 'broken', quote: 'git add -A' });
+  writeFileSync(join(s.cacheDir, 'heeded', 'verdicts', 'r-cut.json'), '{"verdict":');
+  writeFileSync(join(s.cacheDir, 'heeded', 'verdicts', 'r-odd.json'), '{"verdict":"maybe"}');
+  const of = verdicts(s.cacheDir);
+  assert.deepEqual(of('r-k'), { verdict: 'broken', quote: 'git add -A' });
+  assert.equal(of('r-missing'), null);
+  assert.equal(of('r-cut'), null);
+  assert.equal(of('r-odd'), null);
 });

@@ -3,7 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { counter } from '../src/check.ts';
+import { read } from '../src/claude-code.ts';
 import { main } from '../src/cli.ts';
+import { saveVerdict } from '../src/judge.ts';
 import { remember, rulesOf, save, sections } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
@@ -83,7 +86,13 @@ function setup({ session = true, claude = true, cached = false } = {}) {
     });
     return { code, out, err, asked };
   };
-  return { s, repo, calls, heeded };
+  /** The judge's part, for tests about the report: every candidate waiting is confirmed broken. */
+  const confirm = async () => {
+    const c = counter(rulesOf(s.cacheDir));
+    await read(s.configDir, repo, c.on);
+    for (const k of c.waiting().tool.flat()) saveVerdict(s.cacheDir, k.id, { verdict: 'broken' });
+  };
+  return { s, repo, calls, heeded, confirm };
 }
 
 test('no transcripts for the folder: one line, exit 0', async () => {
@@ -94,7 +103,8 @@ test('no transcripts for the folder: one line, exit 0', async () => {
 });
 
 test('the report over the cached rules; a violation is not an error', async () => {
-  const { heeded, calls } = setup({ cached: true });
+  const { heeded, calls, confirm } = setup({ cached: true });
+  await confirm();
   const { code, out } = await heeded([], { terminal: true });
   assert.equal(code, 0);
   assert.match(out, /\n {2}✗ never git add -A {2}kept 0% of 1 {2}broken 1× {2}last /);
@@ -118,7 +128,8 @@ test('a terminal, and yes: the estimate, one call, the rules cached and in the r
   assert.deepEqual(asked, ['read them now? [y/N] ']);
   assert.equal(calls(), 1);
   assert.ok(existsSync(join(s.cacheDir, 'heeded', `${sections(content)[0].hash}.json`)));
-  assert.match(out, /✗ never git add -A/);
+  // A candidate isn't a violation until the judge confirms it.
+  assert.doesNotMatch(out, /✗/);
   assert.doesNotMatch(out, /not read yet/);
 });
 
@@ -140,7 +151,8 @@ test('yes, and no claude to run: exit 1, one line saying what to do', async () =
 });
 
 test('--json: the same document for both commands', async () => {
-  const { heeded } = setup({ cached: true });
+  const { heeded, confirm } = setup({ cached: true });
+  await confirm();
   const report = await heeded(['--json']);
   const listed = await heeded(['rules', '--json']);
   assert.equal(report.out, listed.out);
@@ -155,7 +167,8 @@ test('heeded rules: the rules and how each is checked', async () => {
 });
 
 test('colour only when stdout is a terminal and NO_COLOR is not set', async () => {
-  const { heeded } = setup({ cached: true });
+  const { heeded, confirm } = setup({ cached: true });
+  await confirm();
   assert.match((await heeded([], { columns: 100 })).out, /\x1b\[31m✗/);
   assert.doesNotMatch((await heeded([], { columns: 100, env: { NO_COLOR: '1' } })).out, /\x1b\[/);
   assert.doesNotMatch((await heeded([])).out, /\x1b\[/);
@@ -189,7 +202,9 @@ test('an edited section is asked about again; until it is read, its rules from b
   remember(s.cacheDir, JSON.stringify([join(repo, 'CLAUDE.md'), [], '']), sections(content)[0].hash, '');
   const before = JSON.parse((await heeded(['--json'])).out);
   assert.equal(before.notRead, 1);
-  assert.deepEqual(before.rules.map((r: { name: string; broken: number }) => [r.name, r.broken]), [['never git add -A', 2]]);
+  // The candidates each rule found: none is judged here.
+  const candidates = (doc: { rules: { name: string; toConfirm: number }[] }) => doc.rules.map((r) => [r.name, r.toConfirm]).sort();
+  assert.deepEqual(candidates(before), [['never git add -A', 2]]);
 
   const forcePush = { quote: 'never force-push', name: 'never force-push', kind: 'tool', trigger: 'pushing',
     check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+push\\b' }, broken: { value: '\\s(--force|-f)\\b' } },
@@ -199,8 +214,7 @@ test('an edited section is asked about again; until it is read, its rules from b
   const after = JSON.parse((await heeded(['--json'], { terminal: true, env: { FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: both }]) } })).out);
   assert.equal(calls(), 1);
   assert.equal(after.notRead, 0);
-  assert.deepEqual(after.rules.map((r: { name: string; broken: number }) => [r.name, r.broken]).sort(),
-    [['never force-push', 1], ['never git add -A', 2]]);
+  assert.deepEqual(candidates(after), [['never force-push', 1], ['never git add -A', 2]]);
 });
 
 test("a worktree's copy of a file is one section to read, not two", async () => {

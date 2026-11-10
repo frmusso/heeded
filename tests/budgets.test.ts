@@ -51,7 +51,8 @@ test('100 MB of transcripts at 150 MB/s or more, under 150 MB of memory with a 6
   const rss = Number(/maxRSS (\d+)/.exec(run.stderr)?.[1]) / 1024;
   t.diagnostic(`${megabytes.toFixed(0)} MB in ${seconds.toFixed(2)} s: ${(megabytes / seconds).toFixed(0)} MB/s, peak ${rss.toFixed(0)} MB`);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /✗ never git add -A/);
+  // Candidates wait for the judge: the language rule shows the history was counted.
+  assert.match(run.stdout, /✓ talk in italian/);
   assert.ok(megabytes >= 100, `${megabytes} MB`);
   assert.ok(megabytes / seconds >= 150, `${megabytes / seconds} MB/s`);
   assert.ok(rss < 150, `${rss} MB`);

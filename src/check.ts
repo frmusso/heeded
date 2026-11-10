@@ -1,5 +1,6 @@
 // Applying rules to events: tool checks and, for replies, their language; counting what was kept and broken.
 import type { Event, InstructionFile } from './claude-code.ts';
+import { type Case, excerpts, type Verdict } from './judge.ts';
 import { redact } from './redact.ts';
 import { commands, type Simple } from './shell.ts';
 import type { Pending, Rule, Version } from './rules.ts';
@@ -169,7 +170,8 @@ export function culprit(c: Compiled, tool: string, input: Record<string, unknown
 }
 
 interface Count { applied: number; broken: number }
-interface Evidence { at: string; session: string; agent: string | null; text: string }
+/** A violation: where and what; `quote`, the judge's words for it. */
+interface Evidence { at: string; session: string; agent: string | null; text: string; quote?: string }
 
 /** Context depth buckets, in tokens: where the context window fills up. */
 const DEPTHS = [0, 100_000, 200_000, 400_000];
@@ -186,11 +188,15 @@ export interface RuleData {
   name: string;
   quote: string;
   files: string[];
-  status: 'broken' | 'kept' | 'never-applied' | 'judgment' | 'demoted';
+  status: 'broken' | 'kept' | 'to-confirm' | 'never-applied' | 'judgment' | 'demoted';
   reason?: string;
   check?: Rule['check'];
   applied: number;
   broken: number;
+  /** Cases with a verdict, `none` included. */
+  judged: number;
+  /** A tool rule's candidates the judge hasn't seen: neither kept nor broken yet. */
+  toConfirm: number;
   afterCompaction: Count;
   byDepth: { from: number; to: number | null; applied: number; broken: number }[];
   /** What the rule costs every session that loads it. */
@@ -207,13 +213,26 @@ export interface Data {
   files: string[];
   /** Sections whose rules were never read: they can't be checked until they are. */
   notRead: number;
+  /** The cases a judge would read now. */
+  toJudge: number;
   rules: RuleData[];
   byDepth: RuleData['byDepth'];
 }
 
-/** A rule's counts so far; `compiled` for a tool rule that is checked. */
+/** A rule's counts so far; `compiled` for a tool rule that is checked; `waiting`, its latest cases without a verdict. */
 interface Tally {
   rule: Rule; files: Set<string>; all: Count; after: Count; depth: Count[]; evidence: Evidence[]; compiled: Compiled | null;
+  judged: number; toConfirm: number; waiting: Case[];
+}
+
+/** The cases a rule keeps waiting, at most: a run judges far fewer. */
+const WAITING = 40;
+
+/** Into a rule's cases waiting, latest first (ties by id), the oldest left out past the limit. */
+function wait(list: Case[], c: Case) {
+  const i = list.findIndex((w) => c.at > w.at || (c.at === w.at && c.id < w.id));
+  list.splice(i < 0 ? list.length : i, 0, c);
+  if (list.length > WAITING) list.pop();
 }
 
 /** A violation in one line, secrets redacted: what in the call broke the rule, a reply's language and first words. */
@@ -228,9 +247,11 @@ function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, c: Compiled | n
 
 /**
  * Counts, over a stream of events, how often each rule applied and how often it was broken. Each transcript starts with
- * no file in effect; the rules in effect are those of the files its `instructions` events recorded.
+ * no file in effect; the rules in effect are those of the files its `instructions` events recorded. A call a tool
+ * rule's patterns say broke it is a candidate: it counts by the judge's verdict, and waits for one until then.
  */
-export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; versions: Version[] } | null) {
+export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; versions: Version[] } | null,
+  verdictOf: (id: string) => Verdict | null = () => null) {
   const tallies = new Map<string, Tally>();
   let inEffect = new Map<string, InstructionFile>();
   let checked: Tally[] = [];
@@ -249,6 +270,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
   let active = false;
   let from: string | null = null;
   let to: string | null = null;
+  const excerpt = excerpts();
 
   function refresh() {
     const ids = new Set<string>();
@@ -269,7 +291,8 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         if (!t) {
           // verify demoted every tool rule whose check doesn't compile
           const compiled = rule.kind === 'tool' && !rule.demoted ? compile(rule.check!) as Compiled : null;
-          t = { rule, files: new Set(), all: zero(), after: zero(), depth: DEPTHS.map(zero), evidence: [], compiled };
+          t = { rule, files: new Set(), all: zero(), after: zero(), depth: DEPTHS.map(zero), evidence: [], compiled, judged: 0,
+            toConfirm: 0, waiting: [] };
           tallies.set(rule.id, t);
         }
         t.files.add(file.path);
@@ -305,6 +328,49 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     return latest().filter((v) => v.read && v.at).map(({ section, identity, at }) => ({ section, identity, at }));
   }
 
+  function count(e: Extract<Event, { kind: 'call' | 'reply' }>) {
+    // A session or subagent counts once it did something: a transcript with no call or reply isn't one.
+    if (!active) {
+      active = true;
+      if (agent) subagents++;
+      else sessions++;
+    }
+    if (!from || e.at < from) from = e.at;
+    if (!to || e.at > to) to = e.at;
+    let detected: string | null | undefined;
+    for (const t of checked) {
+      let v: 'none' | 'kept' | 'broken' = 'none';
+      if (e.kind === 'call' && t.compiled) v = verdict(t.compiled, e.tool, e.input);
+      if (e.kind === 'reply' && t.rule.kind === 'language') {
+        detected ??= language(e.text);
+        if (detected) v = detected === t.rule.check?.language ? 'kept' : 'broken';
+      }
+      if (v === 'none') continue;
+      seen.add(e.id);
+      let quote: string | undefined;
+      if (v === 'broken' && t.compiled) {
+        const { text, key } = excerpt.of(e);
+        const id = `${t.rule.id}-${key}`;
+        const judged = verdictOf(id);
+        if (!judged) {
+          t.toConfirm++;
+          wait(t.waiting, { id, rule: t.rule, excerpt: text, at: e.at });
+          continue;
+        }
+        t.judged++;
+        if (judged.verdict === 'none') continue;
+        v = judged.verdict;
+        quote = judged.quote;
+      }
+      add(t.all, v === 'broken');
+      if (e.compactions > 0) add(t.after, v === 'broken');
+      add(t.depth[DEPTHS.findLastIndex((d) => e.depth >= d)], v === 'broken');
+      if (v === 'broken') {
+        t.evidence.push({ at: e.at, session, agent, text: evidence(e, t.compiled, detected ?? null), ...(quote ? { quote } : {}) });
+      }
+    }
+  }
+
   return {
     on(e: Event) {
       if (e.kind === 'transcript') {
@@ -319,55 +385,43 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         refresh();
       } else if (e.kind === 'call' || e.kind === 'reply') {
         for (const c of current) if (e.at > c.at) c.at = e.at;
-        if (seen.has(e.id)) return;
-        // A session or subagent counts once it did something: a transcript with no call or reply isn't one.
-        if (!active) {
-          active = true;
-          if (agent) subagents++;
-          else sessions++;
-        }
-        if (!from || e.at < from) from = e.at;
-        if (!to || e.at > to) to = e.at;
-        let detected: string | null | undefined;
-        for (const t of checked) {
-          let v: 'none' | 'kept' | 'broken' = 'none';
-          if (e.kind === 'call' && t.compiled) v = verdict(t.compiled, e.tool, e.input);
-          if (e.kind === 'reply' && t.rule.kind === 'language') {
-            detected ??= language(e.text);
-            if (detected) v = detected === t.rule.check?.language ? 'kept' : 'broken';
-          }
-          if (v === 'none') continue;
-          seen.add(e.id);
-          add(t.all, v === 'broken');
-          if (e.compactions > 0) add(t.after, v === 'broken');
-          add(t.depth[DEPTHS.findLastIndex((d) => e.depth >= d)], v === 'broken');
-          if (v === 'broken') t.evidence.push({ at: e.at, session, agent, text: evidence(e, t.compiled, detected ?? null) });
-        }
+        if (!seen.has(e.id)) count(e);
       }
+      // Copies are counted once, but their events still lead to the ones after them.
+      excerpt.push(e);
+    },
+
+    /** Per rule, its latest cases without a verdict. */
+    waiting(): { tool: Case[][]; judgment: Case[][] } {
+      const of = (kind: Rule['kind']) => [...tallies.values()].filter((t) => t.rule.kind === kind && t.waiting.length)
+        .map((t) => t.waiting);
+      return { tool: of('tool'), judgment: of('judgment') };
     },
 
     pending,
     readVersions,
 
     result(): Data {
-      const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence }): RuleData => ({
+      const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence, judged, toConfirm }): RuleData => ({
         id: rule.id,
         name: rule.name,
         quote: rule.quote,
         files: [...files],
         status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
-          : all.broken ? 'broken' : all.applied ? 'kept' : 'never-applied',
+          : all.broken ? 'broken' : all.applied ? 'kept' : toConfirm ? 'to-confirm' : 'never-applied',
         ...(rule.demoted ? { reason: rule.demoted } : {}),
         ...(rule.check ? { check: rule.check } : {}),
         applied: all.applied,
         broken: all.broken,
+        judged,
+        toConfirm,
         afterCompaction: after,
         byDepth: buckets(depth),
         tokens: Math.ceil(rule.quote.length / 4),
         evidence: evidence.toReversed().sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
       }));
-      // Broken rules first, the least kept leading; then kept, never applied, judgment, demoted.
-      const rank = ['broken', 'kept', 'never-applied', 'judgment', 'demoted'];
+      // Broken rules first, the least kept leading; then kept, to confirm, never applied, judgment, demoted.
+      const rank = ['broken', 'kept', 'to-confirm', 'never-applied', 'judgment', 'demoted'];
       const keptShare = (r: RuleData) => (r.applied ? (r.applied - r.broken) / r.applied : 0);
       rules.sort((a, b) => rank.indexOf(a.status) - rank.indexOf(b.status) || keptShare(a) - keptShare(b)
         || b.applied - a.applied);
@@ -378,7 +432,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           sum[i].broken += c.broken;
         });
       }
-      return { from, to, sessions, subagents, files: [...files], notRead: new Set(pending().map((p) => p.section.hash)).size, rules, byDepth: buckets(sum) };
+      const toJudge = rules.reduce((n, r) => n + r.toConfirm, 0);
+      return { from, to, sessions, subagents, files: [...files], notRead: new Set(pending().map((p) => p.section.hash)).size,
+        toJudge, rules, byDepth: buckets(sum) };
     },
   };
 }

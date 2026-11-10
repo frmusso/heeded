@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { counter } from './check.ts';
 import { read } from './claude-code.ts';
+import { verdicts } from './judge.ts';
 import { json, type Report, rules, text } from './report.ts';
 import { estimate, extract, type Pending, remember, rulesOf } from './rules.ts';
 
@@ -38,7 +39,7 @@ interface IO {
 
 /** One pass over the folder's transcripts with the rules cached so far; the sections to read. */
 async function scan(configDir: string, folder: string, cacheDir: string): Promise<{ report: Report; pending: Pending[] }> {
-  const count = counter(rulesOf(cacheDir));
+  const count = counter(rulesOf(cacheDir), verdicts(cacheDir));
   const { unrecognized } = await read(configDir, folder, count.on);
   for (const v of count.readVersions()) remember(cacheDir, v.identity, v.section.hash, v.at);
   return { report: { folder, configDir, unrecognized, ...count.result() }, pending: count.pending() };

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { applies, type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
+import type { Verdict } from '../src/judge.ts';
 import { type Rule, sections, type Version, verify } from '../src/rules.ts';
 
 function compiled(check: Check) {
@@ -178,12 +179,18 @@ const IT = 'Ho controllato il test che fallisce e il problema è nel parser. Leg
 const EN = 'I checked the failing test and the problem is in the parser. It reads the whole file into memory, so it breaks '
   + 'on large inputs. I will change it to stream the lines and run the tests again.';
 
+/** The judge, as most tests want it: every case confirmed broken. */
+const confirmed = (): Verdict => ({ verdict: 'broken' });
+
 /** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */
-function count(events: Event[], rulesBy: Record<string, Rule[]>, versionsBy: Record<string, Version[]> = {}): Data {
-  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], versions: versionsBy[f.content] ?? [] }));
+function feed(events: Event[], rulesBy: Record<string, Rule[]>, versionsBy: Record<string, Version[]> = {},
+  verdictOf: (id: string) => Verdict | null = confirmed) {
+  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], versions: versionsBy[f.content] ?? [] }),
+    verdictOf);
   for (const e of events) c.on(e);
-  return c.result();
+  return c;
 }
+const count = (...args: Parameters<typeof feed>): Data => feed(...args).result();
 const start = (session = 's1', agent: string | null = null): Event => ({ kind: 'transcript', session, agent });
 const files = (paths: Record<string, string>, replace = false): Event =>
   ({ kind: 'instructions', files: Object.entries(paths).map(([path, content]) => ({ path, type: 'Project', content })), replace });
@@ -306,7 +313,7 @@ test('the totals: sections not read yet, the files measured, sessions and subage
     reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s1', 'x2'), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' }),
     start('s3'), files({ '/r/CLAUDE.md': 'A' })],
   { A: [addAll] }, { M: missing.map((section) => ({ section, identity: section.hash, read: false, readAt: null })) });
-  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2,
+  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2, toJudge: 0,
     files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md', '/r/sub/CLAUDE.md'], sessions: 2, subagents: 1,
     from: '2026-11-01T09:00:00Z', to: '2026-11-05T08:00:00Z' });
 });
@@ -379,4 +386,71 @@ test('the same text under two paths is one section to read', () => {
   for (const e of [start(), files({ '/r/CLAUDE.md': 'A', '/r/.claude/worktrees/w/CLAUDE.md': 'A' }), bash('ls')]) c.on(e);
   assert.equal(c.pending().length, 2);
   assert.equal(c.result().notRead, 1);
+});
+
+// The judge's verdicts: a tool rule's candidate counts once judged.
+const unjudged = () => null;
+/** The ids of the cases waiting, by their call's time. */
+const waitingAt = (events: Event[], rulesBy: Record<string, Rule[]>) =>
+  Object.fromEntries(feed(events, rulesBy, {}, unjudged).waiting().tool.flat().map((k) => [k.at, k.id]));
+const by = (verdicts: Record<string, Verdict>) => (id: string) => verdicts[id] ?? null;
+const at = (day: number) => ({ at: `2026-11-0${day}T10:00:00Z` });
+const tally = (data: Data, r: Rule) => {
+  const x = data.rules.find((y) => y.id === r.id)!;
+  return { status: x.status, applied: x.applied, broken: x.broken, judged: x.judged, toConfirm: x.toConfirm };
+};
+
+test('a candidate counts only once judged: broken when confirmed, kept, or not a case of the rule', () => {
+  const events = [start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A', at(1)), bash('git add -A', at(2)), bash('git add -A', at(3))];
+  const ids = feed(events, { A: [addAll] }, {}, unjudged).waiting().tool[0].map((k) => k.id);
+  assert.equal(ids.length, 3);
+  const data = count(events, { A: [addAll] }, {},
+    by({ [ids[0]]: { verdict: 'broken', quote: 'git add -A' }, [ids[1]]: { verdict: 'kept' }, [ids[2]]: { verdict: 'none' } }));
+  assert.deepEqual(tally(data, addAll), { status: 'broken', applied: 2, broken: 1, judged: 3, toConfirm: 0 });
+  assert.deepEqual(data.rules[0].evidence, [{ ...at(3), session: 's1', agent: null, text: 'git add -A', quote: 'git add -A' }]);
+});
+
+test("a rule whose candidates aren't judged yet is to confirm, never broken", () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A'), bash('git add -A')], { A: [addAll] }, {}, unjudged);
+  assert.deepEqual(tally(data, addAll), { status: 'to-confirm', applied: 0, broken: 0, judged: 0, toConfirm: 2 });
+  assert.deepEqual(data.rules[0].evidence, []);
+  assert.equal(data.toJudge, 2);
+});
+
+test('the cases waiting: latest first, at most 40 per rule, with their rule and excerpt', () => {
+  const calls = Array.from({ length: 45 }, (_, i) => bash(`git add -A f${i}.ts`, { at: `2026-11-02T10:${String(i).padStart(2, '0')}:00Z` }));
+  const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), ...calls], { A: [addAll] }, {}, unjudged);
+  const [waiting] = c.waiting().tool;
+  assert.equal(waiting.length, 40);
+  assert.deepEqual(waiting.map((k) => k.at), calls.toReversed().slice(0, 40).map((e) => e.kind === 'call' && e.at));
+  for (const [i, k] of waiting.entries()) {
+    assert.equal(k.rule.id, addAll.id);
+    assert.ok(k.excerpt.endsWith(`\ncall Bash: git add -A f${44 - i}.ts`), k.excerpt.slice(-40));
+    assert.ok(k.id.startsWith(`${addAll.id}-`));
+  }
+  assert.equal(tally(c.result(), addAll).toConfirm, 45);
+});
+
+test('a judged case is not waiting', () => {
+  const events = [start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A', at(1)), bash('git add -A', at(2))];
+  const ids = waitingAt(events, { A: [addAll] });
+  const c = feed(events, { A: [addAll] }, {}, by({ [ids[at(2).at]]: { verdict: 'kept' } }));
+  assert.deepEqual(c.waiting().tool.flat().map((k) => k.id), [ids[at(1).at]]);
+});
+
+test('two copies of one call are one case', () => {
+  const events = (s: string) => [start(s), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A', { id: 'tu-x' })];
+  const c = feed([...events('s1'), ...events('s2')], { A: [addAll] }, {}, unjudged);
+  assert.equal(c.waiting().tool.flat().length, 1);
+  assert.equal(tally(c.result(), addAll).toConfirm, 1);
+});
+
+test('after compaction and by depth, candidates count once decided', () => {
+  const events = [start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A', { ...at(1), depth: 150_000, compactions: 1 }),
+    bash('git add -A', { ...at(2), depth: 300_000, compactions: 1 }), bash('git add -A', { ...at(3), depth: 50_000, compactions: 1 })];
+  const ids = waitingAt(events, { A: [addAll] });
+  const r = count(events, { A: [addAll] }, {}, by({ [ids[at(1).at]]: { verdict: 'broken' }, [ids[at(3).at]]: { verdict: 'none' } }))
+    .rules[0];
+  assert.deepEqual(r.afterCompaction, { applied: 1, broken: 1 });
+  assert.deepEqual(r.byDepth.map((b) => [b.applied, b.broken]), [[0, 0], [1, 1], [0, 0], [0, 0]]);
 });

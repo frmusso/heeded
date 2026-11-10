@@ -1,7 +1,10 @@
-// The judge: the cases a rule may apply to, each with an excerpt of its session for a model to read.
+// The judge: the cases a rule may apply to, each with an excerpt of its session for a model to read, and their verdicts.
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Event } from './claude-code.ts';
 import { redact } from './redact.ts';
+import { type Rule, write } from './rules.ts';
 
 /** Part of every case's key: a new prompt or model judges every case again. */
 export const JUDGE_VERSION = 1;
@@ -14,6 +17,42 @@ const LINE = 300;
 const WORDS = 2000;
 
 type Seen = Extract<Event, { kind: 'call' | 'reply' }>;
+
+/** What the judge said of a case: `none` when the rule doesn't apply to it, or the excerpt doesn't tell; `quote`, words
+ * of the excerpt that show it. */
+export interface Verdict { verdict: 'broken' | 'kept' | 'none'; quote?: string }
+/** One event a rule may apply to, known by the rule and its excerpt. */
+export interface Case { id: string; rule: Rule; excerpt: string; at: string }
+
+const VERDICTS = ['broken', 'kept', 'none'];
+const folder = (cacheDir: string) => join(cacheDir, 'heeded', 'verdicts');
+
+/** The verdicts cached, read when asked for: the folder is listed once, a file read only when its case is in it. */
+export function verdicts(cacheDir: string): (id: string) => Verdict | null {
+  let names: Set<string>;
+  try {
+    names = new Set(readdirSync(folder(cacheDir)));
+  } catch {
+    names = new Set();
+  }
+  const read = new Map<string, Verdict | null>();
+  return (id) => {
+    if (!names.has(`${id}.json`)) return null;
+    if (!read.has(id)) {
+      let v: Verdict | null = null;
+      try {
+        const o = JSON.parse(readFileSync(join(folder(cacheDir), `${id}.json`), 'utf8'));
+        if (VERDICTS.includes(o?.verdict) && (o.quote === undefined || typeof o.quote === 'string')) v = o;
+      } catch {}
+      read.set(id, v);
+    }
+    return read.get(id)!;
+  };
+}
+
+export function saveVerdict(cacheDir: string, id: string, v: Verdict) {
+  write(folder(cacheDir), id, v);
+}
 
 /** The characters secrets are made of. */
 const TOKEN = /[\w+/=.-]/;

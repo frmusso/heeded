@@ -138,7 +138,7 @@ export function load(cacheDir: string, hash: string): unknown[] | null {
 }
 
 /** Written whole or not at all: a temporary file, then a rename. */
-function write(dir: string, name: string, value: unknown) {
+export function write(dir: string, name: string, value: unknown) {
   mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `${name}.${process.pid}.tmp`);
   writeFileSync(tmp, JSON.stringify(value));
