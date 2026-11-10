@@ -1,6 +1,9 @@
 // From instruction files to rules: sections, the extraction call, verification, the cache.
 import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { type Check, compile, LANGUAGES, verdict } from './check.ts';
+import type { InstructionFile } from './claude-code.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
 const PROMPT_VERSION = 1;
@@ -87,4 +90,49 @@ function demotion(rule: Rule): string | undefined {
   if (breaks) return `failed its examples: breaks "${breaks.value}"`;
   const keeps = rule.keeping.find((e) => call(e) !== 'kept');
   if (keeps) return `failed its examples: keeps "${keeps.value}"`;
+}
+
+/** A section's rules as the extraction returned them, or null when they were never read (or the file is damaged). */
+export function load(cacheDir: string, hash: string): unknown[] | null {
+  try {
+    const rules = JSON.parse(readFileSync(join(cacheDir, 'heeded', `${hash}.json`), 'utf8'));
+    return Array.isArray(rules) ? rules : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Written whole or not at all: a temporary file, then a rename. */
+export function save(cacheDir: string, hash: string, rules: unknown[]) {
+  const dir = join(cacheDir, 'heeded');
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(dir, `${hash}.${process.pid}.tmp`);
+  writeFileSync(tmp, JSON.stringify(rules));
+  renameSync(tmp, join(dir, `${hash}.json`));
+}
+
+/**
+ * A file's rules from the cache, and its sections never read, memoized by content: worktrees and sessions record the
+ * same files over and over. `AutoMem` is Claude Code's memory index, one-line pointers edited constantly: not measured.
+ */
+export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; missing: Section[] } {
+  const seen = new Map<string, { rules: Rule[]; missing: Section[] }>();
+  const none = { rules: [], missing: [] };
+  return (file) => {
+    if (file.type === 'AutoMem') return none;
+    let found = seen.get(file.content);
+    if (!found) {
+      found = { rules: [], missing: [] };
+      for (const section of sections(file.content)) {
+        const raw = load(cacheDir, section.hash);
+        if (raw === null) found.missing.push(section);
+        else for (const r of raw) {
+          const rule = verify(r, section);
+          if (rule) found.rules.push(rule);
+        }
+      }
+      seen.set(file.content, found);
+    }
+    return found;
+  };
 }

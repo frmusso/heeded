@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { sections, verify } from '../src/rules.ts';
+import { load, rulesOf, save, sections, verify } from '../src/rules.ts';
+import { sandbox } from './support/sandbox.ts';
 
 const shape = (content: string) => sections(content).map(({ path, text }) => ({ path, text }));
 
@@ -104,4 +107,29 @@ test('a judgment rule is kept as is, its trigger in words', () => {
   const raw = { quote: 'write a failing test first', name: 'failing test first', kind: 'judgment', trigger: 'changing code' };
   const { id, ...rest } = verify(raw, section)!;
   assert.deepEqual(rest, raw);
+});
+
+test('the cache: what is saved loads back; a missing or corrupt file loads as nothing', () => {
+  const s = sandbox();
+  const rules = [gitAdd];
+  save(s.cacheDir, 'abc', rules);
+  assert.deepEqual(load(s.cacheDir, 'abc'), rules);
+  assert.deepEqual(readdirSync(join(s.cacheDir, 'heeded')), ['abc.json']);
+  assert.equal(load(s.cacheDir, 'nope'), null);
+  writeFileSync(join(s.cacheDir, 'heeded', 'bad.json'), '[{"quote": ');
+  assert.equal(load(s.cacheDir, 'bad'), null);
+  writeFileSync(join(s.cacheDir, 'heeded', 'obj.json'), '{}');
+  assert.equal(load(s.cacheDir, 'obj'), null);
+});
+
+test("a file's rules: its cached sections give rules, the others are missing; the same content is read once", () => {
+  const s = sandbox();
+  const content = `${section.text}\n\n## other\n\nnothing to see`;
+  const [, other] = sections(content);
+  save(s.cacheDir, section.hash, [gitAdd, { ...gitAdd, quote: 'not in the section' }]);
+  const of = rulesOf(s.cacheDir);
+  const a = of({ path: '/a/CLAUDE.md', type: 'Project', content });
+  assert.deepEqual(a, { rules: [verify(gitAdd, section)], missing: [other] });
+  assert.equal(of({ path: '/b/CLAUDE.md', type: 'Project', content }), a);
+  assert.deepEqual(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), { rules: [], missing: [] });
 });
