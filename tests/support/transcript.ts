@@ -21,6 +21,10 @@ export const summary = (): Line => ({
 export const user = (text: string): Line => ({ type: 'user', message: { role: 'user', content: text } });
 /** Text Claude Code adds to the conversation itself, a caveat or a command's output: never the user's words. */
 export const meta = (text: string): Line => ({ type: 'user', isMeta: true, message: { role: 'user', content: text } });
+/** A prompt the user typed while the agent worked, or a notification queued for it: an attachment, never a user line. */
+export const queued = (prompt: string, commandMode = 'prompt', kind = 'human'): Line => ({
+  type: 'attachment', attachment: { type: 'queued_command', prompt, commandMode, origin: { kind } },
+});
 /** A tool call's result: Claude Code writes it as a user line, the call's id first in its block. */
 export const answer = (toolUseId: string, content: string | { type: 'text'; text: string }[]): Line => ({
   type: 'user', message: { role: 'user', content: [{ tool_use_id: toolUseId, type: 'tool_result', content }] }, toolUseResult: {},

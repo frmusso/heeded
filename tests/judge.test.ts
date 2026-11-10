@@ -16,7 +16,7 @@ let n = 0;
 const call = (input: string | Record<string, unknown>, tool = 'Bash'): Seen =>
   ({ kind: 'call', id: `toolu_${n++}`, tool, input: typeof input === 'string' ? { command: input } : input, at, depth: 0, compactions: 0 });
 const reply = (text: string): Seen => ({ kind: 'reply', id: `msg_${n++}`, text, at, depth: 0, compactions: 0 });
-const prompt = (text: string, by: 'user' | 'agent' = 'user', answer = false): Event => ({ kind: 'prompt', text, at, by, answer });
+const prompt = (text: string, by: 'user' | 'agent' = 'user', starts = true): Event => ({ kind: 'prompt', text, at, by, starts });
 const transcript: Event = { kind: 'transcript', session: 's', agent: null };
 
 function excerpt(events: Event[], last: Seen): string {
@@ -32,7 +32,7 @@ test('an excerpt: the last prompt, the events since, one per line, the case last
 
 test('a new prompt starts a new excerpt; an answer is a line in it', () => {
   assert.equal(excerpt([prompt('fix the login bug'), call('npm test'), prompt('now deploy it'), call('git status'),
-    prompt('User has answered your questions: "Deploy now?"="Yes"', 'user', true)], call('railway up')),
+    prompt('User has answered your questions: "Deploy now?"="Yes"', 'user', false)], call('railway up')),
   'you: now deploy it\ncall Bash: git status\nyou: User has answered your questions: "Deploy now?"="Yes"\ncall Bash: railway up');
 });
 
@@ -73,7 +73,7 @@ test("lines are cut: 300 for calls and replies, 2,000 for the user's words and t
 
 test("over 6,000 characters: the prompt, the user's words and the case kept, the nearest events after them", () => {
   const calls = Array.from({ length: 30 }, (_, i) => call(`echo ${String(i + 1).padStart(2, '0')}${'x'.repeat(288)}`));
-  const answer = prompt('User has answered your questions: "Go on?"="Yes"', 'user', true);
+  const answer = prompt('User has answered your questions: "Go on?"="Yes"', 'user', false);
   const text = excerpt([prompt('p'), ...calls.slice(0, 5), answer, ...calls.slice(5)], call('railway up'));
   assert.ok(text.startsWith('you: p\n…\n'), text.slice(0, 20));
   assert.ok(text.includes('\nyou: User has answered your questions: "Go on?"="Yes"\n'));

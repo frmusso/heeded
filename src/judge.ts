@@ -116,7 +116,7 @@ export function excerpts() {
     push(e: Event) {
       memo = null;
       if (e.kind === 'transcript') restart(null);
-      else if (e.kind === 'prompt' && !e.answer) restart(words(e));
+      else if (e.kind === 'prompt' && e.starts) restart(words(e));
       else if (e.kind === 'prompt' || e.kind === 'call' || e.kind === 'reply') {
         const you = e.kind === 'prompt' && e.by === 'user';
         const text = e.kind === 'prompt' ? words(e) : line(e, LINE);

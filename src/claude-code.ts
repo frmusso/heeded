@@ -11,9 +11,10 @@ export type Event =
   | { kind: 'compaction'; trigger: string; preTokens: number }
   | { kind: 'call'; id: string; tool: string; input: Record<string, unknown>; at: string; depth: number; compactions: number }
   | { kind: 'reply'; id: string; text: string; at: string; depth: number; compactions: number }
-  // A prompt: by the user in a main session, answers to the agent's questions and plans included (`answer`); in a
-  // subagent's, the task the agent that started it wrote.
-  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; answer: boolean };
+  // A prompt: by the user in a main session; in a subagent's, the task the agent that started it wrote. `starts` when it
+  // starts a turn; the user's words given mid-turn don't: an answer to the agent's question or plan, a slash command, a
+  // prompt typed while the agent worked.
+  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; starts: boolean };
 type Reply = Extract<Event, { kind: 'reply' }>;
 
 /** A folder's entries by name; none when it doesn't exist. */
@@ -75,7 +76,7 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
   const user = line.includes('"type":"user"');
   const result = user ? /"tool_use_id":"([^"]*)"/.exec(line) : null;
   if (!line.includes('"type":"assistant"') && !line.includes('"type":"instructions"')
-    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"')
+    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"') && !line.includes('"queued_command"')
     && !(user && (!result || state.asked.has(result[1])))) return true;
   let o;
   try {
@@ -123,14 +124,24 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
     const results = Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'tool_result') : [];
     for (const b of results) {
       const text = state.asked.has(b.tool_use_id) ? textOf(b.content) : '';
-      if (text.trim()) emit({ kind: 'prompt', text, at: o.timestamp, by: 'user', answer: true });
+      if (text.trim()) emit({ kind: 'prompt', text, at: o.timestamp, by: 'user', starts: false });
     }
-    // Lines starting with a tag are Claude Code's own (a command run, a notification), as is an interruption's note.
     const text = results.length ? '' : textOf(m.content);
     const start = text.trimStart();
-    if (start && start[0] !== '<' && !start.startsWith('[Request interrupted')) {
-      emit({ kind: 'prompt', text, at: o.timestamp, by: state.replies ? 'user' : 'agent', answer: false });
+    const command = /^<command-(?:name|message)>/.test(start) && /<command-name>([^<]*)<\/command-name>/.exec(start);
+    if (command) {
+      const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(start)?.[1] ?? '';
+      emit({ kind: 'prompt', text: `${command[1]} ${args}`.trim(), at: o.timestamp, by: 'user', starts: false });
+    } else if (start && start[0] !== '<' && !start.startsWith('[Request interrupted')) {
+      // Other lines starting with a tag are Claude Code's own (a command's output, a notification), as is an
+      // interruption's note.
+      emit({ kind: 'prompt', text, at: o.timestamp, by: state.replies ? 'user' : 'agent', starts: true });
     }
+  } else if (o.type === 'attachment' && a?.type === 'queued_command' && a.commandMode === 'prompt' && a.origin?.kind === 'human'
+    && typeof o.timestamp === 'string' && !Number.isNaN(Date.parse(o.timestamp))) {
+    // What the user typed while the agent worked reaches it mid-turn, recorded only here.
+    const text = textOf(a.prompt);
+    if (text.trim()) emit({ kind: 'prompt', text, at: o.timestamp, by: 'user', starts: false });
   } else if (o.type === 'attachment' && a?.type === 'instructions' && Array.isArray(a.files)) {
     // After a compaction Claude Code records every file in effect again: they replace the ones before.
     emit({ kind: 'instructions', files: a.files.filter(isFile), replace: state.replace });
