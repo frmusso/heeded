@@ -1,7 +1,7 @@
 // The Claude Code adapter, the only module that knows where Claude Code keeps its transcripts and what their lines look
 // like: it finds the transcripts of the sessions run in a folder and streams them into neutral events.
 import type { Dirent } from 'node:fs';
-import { type FileHandle, open, readdir, realpath } from 'node:fs/promises';
+import { type FileHandle, lstat, open, readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface InstructionFile { path: string; type: string; content: string }
@@ -66,7 +66,7 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
   } catch {
     return false;
   }
-  // A message's reply goes out before anything that follows it.
+  // A message's reply goes out before an event that changes the rules or the compactions; its own calls don't.
   const emit = (e: Event) => {
     flush(state, out);
     out(e);
@@ -74,7 +74,8 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
   const a = o.attachment;
   const meta = o.compactMetadata;
   const m = o.message;
-  if (o.type === 'assistant' && isObject(m) && Array.isArray(m.content) && typeof o.timestamp === 'string') {
+  if (o.type === 'assistant' && isObject(m) && Array.isArray(m.content) && typeof o.timestamp === 'string'
+    && !Number.isNaN(Date.parse(o.timestamp))) {
     // The context the request was sent with: every line of a message carries the same usage.
     const u = m.usage;
     if (isObject(u)) state.depth = tokens(u.input_tokens) + tokens(u.cache_creation_input_tokens) + tokens(u.cache_read_input_tokens);
@@ -88,7 +89,7 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
           state.reply = { kind: 'reply', id: m.id, text: b.text, at: o.timestamp, depth: state.depth, compactions: state.compactions };
         }
       } else if (b?.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string' && isObject(b.input)) {
-        emit({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions });
+        out({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions });
       }
     }
   } else if (o.type === 'attachment' && a?.type === 'instructions' && Array.isArray(a.files)) {
@@ -174,6 +175,8 @@ export async function read(configDir: string, folder: string, emit: (e: Event) =
       const session = file.name.slice(0, -'.jsonl'.length);
       if (!(await readFile(join(project, file.name), session, null, inside, emit, unrecognized))) continue;
       const subagents = join(project, session, 'subagents');
+      const real = async (dir: string) => (await lstat(dir).catch(() => null))?.isDirectory();
+      if (!(await real(join(project, session))) || !(await real(subagents))) continue;
       for (const sub of await entries(subagents)) {
         if (!sub.isFile() || !sub.name.startsWith('agent-') || !sub.name.endsWith('.jsonl')) continue;
         await readFile(join(subagents, sub.name), session, sub.name.slice('agent-'.length, -'.jsonl'.length), null, emit,

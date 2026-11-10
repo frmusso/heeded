@@ -155,7 +155,7 @@ export interface Data {
   to: string | null;
   sessions: number;
   subagents: number;
-  /** The instruction files that have rules, or sections not read yet. */
+  /** The instruction files measured. */
   files: string[];
   /** Sections whose rules were never read: they can't be checked until they are. */
   notRead: number;
@@ -171,11 +171,11 @@ interface Tally {
 /** A violation in one line, secrets redacted: a call's checked value (or its tool), a reply's language and first words. */
 function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, field: string | undefined, detected: string | null): string {
   if (e.kind === 'reply') {
-    const words = redact(e.text).split(/\s+/).filter(Boolean);
+    const words = redact(e.text).split(/[\p{Cc}\s]+/u).filter(Boolean);
     return `${detected}: "${words.slice(0, 8).join(' ')}${words.length > 8 ? ' …' : ''}"`;
   }
-  const value = field === undefined ? e.tool : String(e.input[field]);
-  const line = redact(value).replace(/\s+/g, ' ').trim();
+  const value = field === undefined ? undefined : e.input[field];
+  const line = redact(typeof value === 'string' ? value : e.tool).replace(/[\p{Cc}\s]+/gu, ' ').trim();
   return line.length > 200 ? `${line.slice(0, 200)}…` : line;
 }
 
@@ -183,7 +183,7 @@ function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, field: string |
  * Counts, over a stream of events, how often each rule applied and how often it was broken. Each transcript starts with
  * no file in effect; the rules in effect are those of the files its `instructions` events recorded.
  */
-export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; missing: Section[] }) {
+export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; missing: Section[] } | null) {
   const tallies = new Map<string, Tally>();
   let inEffect = new Map<string, InstructionFile>();
   let checked: Tally[] = [];
@@ -196,6 +196,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
   const files = new Set<string>();
   let sessions = 0;
   let subagents = 0;
+  let active = false;
   let from: string | null = null;
   let to: string | null = null;
 
@@ -204,8 +205,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
     checked = [];
     for (const file of inEffect.values()) {
       const found = rulesOf(file);
+      if (!found) continue;
+      files.add(file.path);
       for (const s of found.missing) missing.add(s.hash);
-      if (found.rules.length || found.missing.length) files.add(file.path);
       for (const rule of found.rules) {
         let t = tallies.get(rule.id);
         if (!t) {
@@ -227,8 +229,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
     on(e: Event) {
       if (e.kind === 'transcript') {
         ({ session, agent } = e);
-        if (agent) subagents++;
-        else sessions++;
+        active = false;
         inEffect = new Map();
         checked = [];
       } else if (e.kind === 'instructions') {
@@ -236,6 +237,12 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
         for (const file of e.files) inEffect.set(file.path, file);
         refresh();
       } else if ((e.kind === 'call' || e.kind === 'reply') && !seen.has(e.id)) {
+        // A session or subagent counts once it did something: a transcript with no call or reply isn't one.
+        if (!active) {
+          active = true;
+          if (agent) subagents++;
+          else sessions++;
+        }
         if (!from || e.at < from) from = e.at;
         if (!to || e.at > to) to = e.at;
         let detected: string | null | undefined;

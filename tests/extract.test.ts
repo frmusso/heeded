@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { estimate, extract, type Section, sections } from '../src/rules.ts';
+import { estimate, extract, load, type Section, sections } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
 
@@ -38,7 +38,7 @@ function claude(replies: { stdout?: string; exit?: number; stderr?: string }[]) 
 test('one isolated claude -p call per batch: the exact flags, an empty folder of its own, the prompt on stdin', async () => {
   const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
   const key = `sk-${'ant-api03-Zx9_Qw8-Er7Ty6Ui5Op4'}`;
-  await extract([section(`## git\n\n- never push with ${key}`, 'h1', ['rules'])], env);
+  await extract([section(`## git\n\n- never push with ${key}`, 'h1', ['rules'])], env, s.cacheDir);
   const [call] = calls();
   const schema = call.argv[6];
   assert.deepEqual(call.argv, ['-p', '--model', 'sonnet', '--output-format', 'json', '--json-schema', schema,
@@ -52,37 +52,39 @@ test('one isolated claude -p call per batch: the exact flags, an empty folder of
   assert.ok(!call.stdin.includes(s.root));
 });
 
-test('rules come back by section id, unknown ids ignored; tokens summed', async () => {
+test('each batch is cached as it is read, by section id, unknown ids ignored; tokens summed', async () => {
   const rule = { quote: 'q', name: 'n', kind: 'judgment', trigger: 't' };
-  const { env, calls } = claude([
+  const { s, env, calls } = claude([
     { stdout: answer([{ id: '1', rules: [rule] }, { id: '9', rules: [rule] }], [3800, 100, 0, 200]) },
     { stdout: answer([{ id: '2', rules: [] }, { id: '1', rules: [] }], [3800, 0, 50, 300]) },
   ]);
-  const result = await extract([section('a'.repeat(20_000), 'ha'), section('b'.repeat(25_000), 'hb'), section('c', 'hc')], env);
+  const result = await extract([section('a'.repeat(20_000), 'ha'), section('b'.repeat(25_000), 'hb'), section('c', 'hc')], env,
+    s.cacheDir);
   assert.equal(calls().length, 2);
-  assert.deepEqual(result, { rules: new Map([['ha', [rule]], ['hb', []], ['hc', []]]), tokens: 8250, errors: [] });
+  assert.deepEqual(result, { read: 3, tokens: 8250, errors: [] });
+  assert.deepEqual([load(s.cacheDir, 'ha'), load(s.cacheDir, 'hb'), load(s.cacheDir, 'hc')], [[rule], [], []]);
 });
 
 test('claude not on the PATH: one error, nothing read, no other call tried', async () => {
   const s = sandbox();
-  const result = await extract([section('a'.repeat(20_000), 'ha'), section('b'.repeat(20_000), 'hb')], s.env);
-  assert.deepEqual(result, { rules: new Map(), tokens: 0,
-    errors: ['claude not found. install claude code, or run heeded where claude runs.'] });
+  const result = await extract([section('a'.repeat(20_000), 'ha'), section('b'.repeat(20_000), 'hb')], s.env, s.cacheDir);
+  assert.deepEqual(result, { read: 0, tokens: 0, errors: ['claude not found. install claude code, or run heeded where claude runs.'] });
 });
 
 test('a call that fails or answers out of shape: an error, nothing read for its batch; the other batches still read', async () => {
-  const { env, calls } = claude([
+  const { s, env, calls } = claude([
     { exit: 1, stderr: 'Error: rate limited\nretry later\n' },
     { stdout: JSON.stringify({ type: 'result', is_error: true, result: 'nope' }) },
     { stdout: answer([{ id: '1', rules: 'none' as never }]) },
     { stdout: 'not json' },
     { stdout: answer([{ id: '1', rules: [] }]) },
   ]);
-  const result = await extract(['a', 'b', 'c', 'd', 'e'].map((x) => section(x.repeat(20_000), `h${x}`)), env);
+  const result = await extract(['a', 'b', 'c', 'd', 'e'].map((x) => section(x.repeat(20_000), `h${x}`)), env, s.cacheDir);
   assert.equal(calls().length, 5);
   const shape = "claude's answer didn't match the schema";
-  assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', shape, shape, shape]);
-  assert.deepEqual(result.rules, new Map([['he', []]]));
+  assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', 'claude: nope', shape, shape]);
+  assert.equal(result.read, 1);
+  assert.deepEqual(['ha', 'hb', 'hc', 'hd', 'he'].map((h) => load(s.cacheDir, h)), [null, null, null, null, []]);
 });
 
 test("the sandbox's PATH holds only its own folder, so the real claude is never reached, even when it sits next to node", () => {
@@ -91,18 +93,24 @@ test("the sandbox's PATH holds only its own folder, so the real claude is never 
 });
 
 test('a secret in a heading above the section never reaches claude either', async () => {
-  const { env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
   const key = `gh${'p_'}Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56Qr78`;
   const [, section] = sections(`# deploy with ${key}\n\nhow\n\n## rules\n\n- never push`);
-  await extract([section], env);
+  await extract([section], env, s.cacheDir);
   assert.ok(!calls()[0].stdin.includes(key));
   assert.match(calls()[0].stdin, /path="deploy with …"/);
 });
 
 test('an answer that leaves a section out: an error, nothing read for its batch', async () => {
   const rule = { quote: 'q', name: 'n', kind: 'judgment', trigger: 't' };
-  const { env } = claude([{ stdout: answer([{ id: 'section-1', rules: [rule] }, { id: '2', rules: [] }]) }]);
-  const result = await extract([section('a', 'ha'), section('b', 'hb')], env);
+  const { s, env } = claude([{ stdout: answer([{ id: 'section-1', rules: [rule] }, { id: '2', rules: [] }]) }]);
+  const result = await extract([section('a', 'ha'), section('b', 'hb')], env, s.cacheDir);
   assert.deepEqual(result.errors, ["claude's answer didn't match the schema"]);
-  assert.deepEqual(result.rules, new Map());
+  assert.deepEqual([load(s.cacheDir, 'ha'), load(s.cacheDir, 'hb')], [null, null]);
+});
+
+test('a failed call says what claude said: the first line of its error, wherever it wrote it', async () => {
+  const { s, env } = claude([{ exit: 1, stdout: 'Invalid API key · Please run /login\n' }]);
+  assert.deepEqual((await extract([section('a', 'ha')], env, s.cacheDir)).errors,
+    ['claude exited with code 1: Invalid API key · Please run /login']);
 });

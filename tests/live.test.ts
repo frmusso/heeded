@@ -6,7 +6,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { extract, sections, verify } from '../src/rules.ts';
+import { extract, load, sections, verify } from '../src/rules.ts';
 
 const skip = process.env.HEEDED_LIVE !== '1' && 'calls claude: set HEEDED_LIVE=1 to run it';
 
@@ -17,10 +17,10 @@ test('the extraction call is isolated, and its answer verifies', { skip }, async
   process.env.TMPDIR = dir; // the call's own folder is made in here, under the canary
   try {
     const [section] = sections('## git\n\n- never run `git push --force`\n');
-    const result = await extract([section], process.env);
+    const result = await extract([section], process.env, dir);
     t.diagnostic(`${result.tokens} tokens`);
     assert.deepEqual(result.errors, []);
-    const raw = result.rules.get(section.hash) ?? [];
+    const raw = load(dir, section.hash) ?? [];
     const rules = raw.map((r) => verify(r, section));
     assert.ok(rules.some((r) => r?.kind === 'tool' && !r.demoted), JSON.stringify(raw));
     assert.doesNotMatch(JSON.stringify(raw), /canary/);

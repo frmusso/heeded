@@ -131,11 +131,20 @@ test("a file's rules: its cached sections give rules, the others are missing; th
   const a = of({ path: '/a/CLAUDE.md', type: 'Project', content });
   assert.deepEqual(a, { rules: [verify(gitAdd, section)], missing: [other] });
   assert.equal(of({ path: '/b/CLAUDE.md', type: 'Project', content }), a);
-  assert.deepEqual(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), { rules: [], missing: [] });
+  assert.equal(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), null);
 });
 
 test('a quote is checked against the text the model saw: with its secrets redacted', () => {
   const [withKey] = sections(`- never print the token gh${'p_'}Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56Qr78 in a reply`);
   const raw = { quote: 'never print the token … in a reply', name: 'never print the token', kind: 'judgment', trigger: 'replying' };
   assert.equal(verify(raw, withKey)?.quote, 'never print the token … in a reply');
+});
+
+test('a fence closes only with its own kind of marker', () => {
+  const md = '# setup\n\n~~~\n```\n# still code\n~~~\nafter';
+  assert.deepEqual(sections(md).map((s) => s.text), [md]);
+});
+
+test('a name holds no control characters: no line breaks, no terminal escapes', () => {
+  assert.equal(verify({ ...gitAdd, name: 'never\n git\x1b[31m add' }, section)!.name, 'never git [31m add');
 });

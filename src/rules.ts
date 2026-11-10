@@ -30,9 +30,11 @@ export function sections(content: string): Section[] {
     const text = lines.join('\n').trim();
     if (text && text !== heading) out.push({ path, text, hash: hash(path, text) });
   };
-  let fence = false;
+  let fence = ''; // the marker of the open code block: it closes with its own kind, at least as long
   for (const line of content.replace(/\r\n?/g, '\n').split('\n')) {
-    if (/^ {0,3}(```|~~~)/.test(line)) fence = !fence;
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker && !fence) fence = marker;
+    else if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = '';
     const h = fence ? null : /^(#{1,6})[ \t]+(.+)$/.exec(line);
     if (h) {
       close();
@@ -75,7 +77,7 @@ export function verify(raw: unknown, section: Section): Rule | null {
   const r = raw as Record<string, unknown>;
   if (typeof r?.quote !== 'string' || !collapse(redact(section.text)).includes(collapse(r.quote))) return null;
   const id = createHash('sha256').update(collapse(r.quote).toLowerCase()).digest('hex').slice(0, 8);
-  const name = [...String(r.name)].slice(0, 40).join('').trimEnd();
+  const name = [...String(r.name).replace(/[\p{Cc}\s]+/gu, ' ').trim()].slice(0, 40).join('').trimEnd();
   const rule: Rule = { ...(r as unknown as Rule), id, name };
   const language = rule.check?.language;
   const demoted = rule.kind === 'tool' ? demotion(rule)
@@ -116,13 +118,13 @@ export function save(cacheDir: string, hash: string, rules: unknown[]) {
 
 /**
  * A file's rules from the cache, and its sections never read, memoized by content: worktrees and sessions record the
- * same files over and over. `AutoMem` is Claude Code's memory index, one-line pointers edited constantly: not measured.
+ * same files over and over. Null for a file not measured: `AutoMem` is Claude Code's memory index, one-line pointers
+ * edited constantly.
  */
-export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; missing: Section[] } {
+export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; missing: Section[] } | null {
   const seen = new Map<string, { rules: Rule[]; missing: Section[] }>();
-  const none = { rules: [], missing: [] };
   return (file) => {
-    if (file.type === 'AutoMem') return none;
+    if (file.type === 'AutoMem') return null;
     let found = seen.get(file.content);
     if (!found) {
       found = { rules: [], missing: [] };
@@ -262,14 +264,18 @@ async function claude(prompt: string, env: NodeJS.ProcessEnv):
   }
 }
 
+/** The first line with something on it. */
+const firstLine = (text: string) => text.split('\n').find((l) => l.trim())?.trim() ?? '';
+
 /**
- * Reads the rules of `sections` through the user's own claude, sonnet, one call per batch. Only the sections' text
- * leaves the machine, secrets redacted; never a file's path. A batch that fails is reported and returns nothing.
+ * Reads the rules of `sections` through the user's own claude, sonnet, one call per batch, and caches each batch as it
+ * comes: an interrupted run keeps what it paid for. Only the sections' text leaves the machine, secrets redacted; never
+ * a file's path. A batch that fails is reported and nothing of it is cached.
  */
-export async function extract(sections: Section[], env: NodeJS.ProcessEnv):
-  Promise<{ rules: Map<string, unknown[]>; tokens: number; errors: string[] }> {
-  const rules = new Map<string, unknown[]>();
+export async function extract(sections: Section[], env: NodeJS.ProcessEnv, cacheDir: string):
+  Promise<{ read: number; tokens: number; errors: string[] }> {
   const errors: string[] = [];
+  let read = 0;
   let tokens = 0;
   for (const batch of batches(sections)) {
     const body = batch.map((s, i) =>
@@ -280,24 +286,29 @@ export async function extract(sections: Section[], env: NodeJS.ProcessEnv):
       break;
     }
     if (run.code !== 0) {
-      errors.push(`claude exited with code ${run.code}: ${run.stderr.split('\n')[0]}`);
+      errors.push(`claude exited with code ${run.code}: ${firstLine(run.stderr) || firstLine(run.stdout)}`);
       continue;
     }
     let out;
     try {
       out = JSON.parse(run.stdout);
     } catch {}
-    const answered = out?.structured_output?.sections;
     const u = out?.usage ?? {};
     tokens += [u.input_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens, u.output_tokens]
       .reduce((n: number, t) => n + (typeof t === 'number' ? t : 0), 0);
+    if (out?.is_error === true) {
+      errors.push(`claude: ${firstLine(String(out.result ?? ''))}`);
+      continue;
+    }
     // Every section must be answered: one left out would be cached as holding no rule, and never read again.
+    const answered = out?.structured_output?.sections;
     const byId = new Map(Array.isArray(answered) ? answered.map((a) => [a?.id, a?.rules]) : []);
     if (!batch.every((_, i) => Array.isArray(byId.get(String(i + 1))))) {
       errors.push("claude's answer didn't match the schema");
       continue;
     }
-    batch.forEach((s, i) => rules.set(s.hash, byId.get(String(i + 1))));
+    batch.forEach((s, i) => save(cacheDir, s.hash, byId.get(String(i + 1))));
+    read += batch.length;
   }
-  return { rules, tokens, errors };
+  return { read, tokens, errors };
 }

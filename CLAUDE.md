@@ -75,7 +75,8 @@ instruction files (from the events) ──▶ rules.ts: sections → cache → v
 
 ## commands
 
-the sources are typescript run as is: node 22.18 or later.
+the sources are typescript run as is: node 22.18 or later. no runtime dependencies; two dev ones, `typescript` and
+`@types/node` (without it `tsc` can't check the `node:` imports).
 
 ```sh
 npm install

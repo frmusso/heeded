@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { counter } from './check.ts';
 import { read } from './claude-code.ts';
 import { json, type Report, rules, text } from './report.ts';
-import { estimate, extract, rulesOf, save, type Section } from './rules.ts';
+import { estimate, extract, rulesOf, type Section } from './rules.ts';
 
 const HELP = `heeded — did your coding agent follow its instructions?
 
@@ -42,7 +42,7 @@ async function scan(configDir: string, folder: string, cacheDir: string): Promis
   const missing = new Map<string, Section>();
   const count = counter((file) => {
     const found = of(file);
-    for (const s of found.missing) missing.set(s.hash, s);
+    for (const s of found?.missing ?? []) missing.set(s.hash, s);
     return found;
   });
   const { unrecognized } = await read(configDir, folder, count.on);
@@ -99,12 +99,11 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
     // ctrl-c or ctrl-d at the question is a no.
     const answer = await io.ask('read them now? [y/N] ').catch(() => '');
     if (/^y(es)?$/i.test(answer.trim())) {
-      const found = await extract(missing, io.env);
-      for (const [hash, list] of found.rules) save(cacheDir, hash, list);
-      if (found.rules.size) io.err(`read ${plural(found.rules.size, 'section')} · ${found.tokens.toLocaleString('en-US')} tokens\n`);
+      const found = await extract(missing, io.env, cacheDir);
+      if (found.read) io.err(`read ${plural(found.read, 'section')} · ${found.tokens.toLocaleString('en-US')} tokens\n`);
       for (const e of found.errors) io.err(`heeded: ${e}\n`);
       if (found.errors.length) code = 1;
-      if (found.rules.size) ({ report } = await scan(configDir, io.cwd, cacheDir));
+      if (found.read) ({ report } = await scan(configDir, io.cwd, cacheDir));
     }
   }
 

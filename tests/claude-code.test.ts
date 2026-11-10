@@ -136,7 +136,7 @@ test('a line without usage keeps the depth last seen', async () => {
   assert.deepEqual((await events(s.configDir, repo)).map((e) => e.kind === 'call' && e.depth), [false, 60, 60]);
 });
 
-test("the text blocks of one message are one reply, before the message's calls; subagents' replies are not read", async () => {
+test("the text blocks of one message are one reply, out when the message ends; subagents' replies are not read", async () => {
   const s = sandbox();
   const repo = join(s.root, 'repo');
   const at = (t: string, line: object) => ({ ...line, timestamp: `2026-11-02T10:00:0${t}.000Z` });
@@ -148,8 +148,8 @@ test("the text blocks of one message are one reply, before the message's calls; 
   const call = { kind: 'call', id: 'tu1', tool: 'Bash', input: { command: 'ls' }, at: '2026-11-02T10:00:03.000Z', depth: 6, compactions: 0 };
   assert.deepEqual(await events(s.configDir, repo), [
     { kind: 'transcript', session: 'a', agent: null },
-    { kind: 'reply', id: 'm1', text: 'first\nsecond', at: '2026-11-02T10:00:01.000Z', depth: 6, compactions: 0 },
     call,
+    { kind: 'reply', id: 'm1', text: 'first\nsecond', at: '2026-11-02T10:00:01.000Z', depth: 6, compactions: 0 },
     { kind: 'reply', id: 'm2', text: 'third', at: '2026-11-02T10:00:04.000Z', depth: 15, compactions: 0 },
     { kind: 'transcript', session: 'a', agent: 'x1' },
     call,
@@ -235,4 +235,36 @@ test('a transcript that cannot be read is skipped, the others read', async () =>
   chmodSync(writeSession(s.configDir, repo, 'a', [user('hi')]), 0o000);
   writeSession(s.configDir, repo, 'b', [user('hi')]);
   assert.deepEqual(await events(s.configDir, repo), [{ kind: 'transcript', session: 'b', agent: null }]);
+});
+
+test('a line whose time is not a date is skipped', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const tool = { id: 'tu1', name: 'Bash', input: { command: 'ls' } };
+  writeSession(s.configDir, repo, 'a', [{ ...assistant({ id: 'm1', tool }), timestamp: 'not a date' }]);
+  assert.deepEqual((await events(s.configDir, repo)).map((e) => e.kind), ['transcript']);
+});
+
+test('text, a tool call, then more text in one message: one reply with both texts', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const tool = { id: 'tu1', name: 'Bash', input: { command: 'ls' } };
+  writeSession(s.configDir, repo, 'a', [assistant({ id: 'm1', text: 'one' }), assistant({ id: 'm1', tool }),
+    assistant({ id: 'm1', text: 'two' })]);
+  const replies = (await events(s.configDir, repo)).filter((e) => e.kind === 'reply');
+  assert.deepEqual(replies.map((e) => e.kind === 'reply' && e.text), ['one\ntwo']);
+});
+
+test("a session's folder or subagents folder that is a symlink is not followed", async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const other = writeSession(s.configDir, join(s.root, 'other'), 'x', [user('hi')], { o1: [user('task')] });
+  const a = writeSession(s.configDir, repo, 'a', [user('hi')]);
+  symlinkSync(join(dirname(other), 'x'), join(dirname(a), 'a'));
+  const b = writeSession(s.configDir, repo, 'b', [user('hi')]);
+  mkdirSync(join(dirname(b), 'b'));
+  symlinkSync(join(dirname(other), 'x', 'subagents'), join(dirname(b), 'b', 'subagents'));
+  assert.deepEqual(await events(s.configDir, repo), [
+    { kind: 'transcript', session: 'a', agent: null }, { kind: 'transcript', session: 'b', agent: null },
+  ]);
 });

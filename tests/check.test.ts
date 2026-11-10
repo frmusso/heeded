@@ -143,7 +143,7 @@ const EN = 'I checked the failing test and the problem is in the parser. It read
 
 /** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */
 function count(events: Event[], rulesBy: Record<string, Rule[]>, missingBy: Record<string, Section[]> = {}): Data {
-  const c = counter((f) => ({ rules: rulesBy[f.content] ?? [], missing: missingBy[f.content] ?? [] }));
+  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], missing: missingBy[f.content] ?? [] }));
   for (const e of events) c.on(e);
   return c.result();
 }
@@ -261,13 +261,26 @@ test('the same rule in two files is one rule, from both files', () => {
   assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 1, broken: 1 });
 });
 
-test('the totals: sections not read yet, the files with rules, sessions, subagents, the time span', () => {
+test('the totals: sections not read yet, the files measured, sessions and subagents that did something, the span', () => {
   const missing = [{ path: [], text: 'a', hash: 'h1' }, { path: [], text: 'b', hash: 'h2' }];
-  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'A', '/r/CLAUDE.local.md': 'M', '/m/MEMORY.md': 'E' }),
+  const memory: Event = { kind: 'instructions', files: [{ path: '/m/MEMORY.md', type: 'AutoMem', content: 'E' }], replace: false };
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'A', '/r/CLAUDE.local.md': 'M', '/r/sub/CLAUDE.md': 'none' }), memory,
     bash('ls', { at: '2026-11-03T10:00:00Z' }), start('s1', 'x1'), files({ '/r/CLAUDE.local.md': 'M' }),
-    reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' })],
+    reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s1', 'x2'), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' }),
+    start('s3'), files({ '/r/CLAUDE.md': 'A' })],
   { A: [addAll] }, { M: missing });
   assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2,
-    files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md'], sessions: 2, subagents: 1, from: '2026-11-01T09:00:00Z',
-    to: '2026-11-05T08:00:00Z' });
+    files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md', '/r/sub/CLAUDE.md'], sessions: 2, subagents: 1,
+    from: '2026-11-01T09:00:00Z', to: '2026-11-05T08:00:00Z' });
+});
+
+test('evidence never reads undefined, and holds no control characters', () => {
+  const mcp = rule({ quote: 'clickup is read-only', name: 'clickup is read-only', kind: 'tool', trigger: 'clickup',
+    check: { field: 'name', when: { tool: '^mcp__clickup__' }, broken: { tool: '_create_' } },
+    breaking: [{ tool: 'mcp__clickup__create_task', value: 'x' }], keeping: [{ tool: 'mcp__clickup__get_task', value: 'x' }] });
+  const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A\x1b[2J', { at: '2026-11-02T10:00:00Z' }),
+    { kind: 'call', id: 'c1', tool: 'mcp__clickup__create_task', input: {}, at: '2026-11-01T10:00:00Z', depth: 0, compactions: 0 }],
+  { A: [addAll, mcp] });
+  assert.equal(data.rules.find((r) => r.id === addAll.id)!.evidence[0].text, 'git add -A [2J');
+  assert.equal(data.rules.find((r) => r.id === mcp.id)!.evidence[0].text, 'mcp__clickup__create_task');
 });
