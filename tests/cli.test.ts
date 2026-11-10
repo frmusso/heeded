@@ -55,10 +55,14 @@ const gitAdd = {
   check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+add\\b' }, broken: { value: '\\s(-A|--all)\\b' } },
   breaking: [{ tool: 'Bash', value: 'git add -A' }], keeping: [{ tool: 'Bash', value: 'git add a.ts' }],
 };
+const usage = { input_tokens: 3800, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 200 };
 const answer = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, structured_output: { sections: [{ id: '1', rules: [gitAdd] }] },
-  usage: { input_tokens: 3800, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 200 } });
+  usage });
+/** The judge's answer for the session's one case, `git add -A`. */
+const confirmed = JSON.stringify({ type: 'result', subtype: 'success', is_error: false,
+  structured_output: { cases: [{ id: '1', verdict: 'broken', quote: 'git add -A' }] }, usage });
 
-function setup({ session = true, claude = true, cached = false } = {}) {
+function setup({ session = true, claude = true, cached = false, replies = [answer] } = {}) {
   const s = sandbox();
   const repo = join(s.root, 'repo');
   mkdirSync(repo);
@@ -76,7 +80,8 @@ function setup({ session = true, claude = true, cached = false } = {}) {
     let err = '';
     const asked: string[] = [];
     const code = await main(args, {
-      env: { ...s.env, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: answer }]), ...env }, cwd: repo,
+      env: { ...s.env, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_REPLY: JSON.stringify(replies.map((stdout) => ({ stdout }))), ...env },
+      cwd: repo,
       terminal, columns, out: (x) => (out += x), err: (x) => (err += x),
       ask: async (q) => {
         asked.push(q);
@@ -102,13 +107,32 @@ test('no transcripts for the folder: one line, exit 0', async () => {
   assert.equal(out, `\n  no claude code transcripts for ${repo} in ~/.claude\n`);
 });
 
-test('the report over the cached rules; a violation is not an error', async () => {
-  const { heeded, calls, confirm } = setup({ cached: true });
-  await confirm();
-  const { code, out } = await heeded([], { terminal: true });
+test('a terminal, cases waiting: the cases and what they cost, judged on yes; a violation is not an error', async () => {
+  const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
+  const { code, out, err, asked } = await heeded([], { terminal: true });
   assert.equal(code, 0);
+  assert.equal(err, '1 case to judge · claude sonnet · ~4k tokens\njudged 1 case · 4,000 tokens\n');
+  assert.deepEqual(asked, ['go ahead? [y/N] ']);
+  assert.equal(calls(), 1);
   assert.match(out, /\n {2}✗ never git add -A {2}kept 0% of 1 {2}broken 1× {2}last /);
+});
+
+test('a run with nothing waiting asks nothing and spends nothing', async () => {
+  const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
+  await heeded([], { terminal: true });
+  const { err, out, asked } = await heeded([], { terminal: true });
+  assert.equal(err, '');
+  assert.deepEqual(asked, []);
+  assert.equal(calls(), 1);
+  assert.match(out, /✗ never git add -A/);
+});
+
+test('not a terminal: nothing read or judged, the report says what waits', async () => {
+  const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
+  const doc = JSON.parse((await heeded(['--json'])).out);
   assert.equal(calls(), 0);
+  assert.equal(doc.toJudge, 1);
+  assert.deepEqual([doc.rules[0].broken, doc.rules[0].toConfirm], [0, 1]);
 });
 
 test('not a terminal: new sections are never read, and the report says so', async () => {
@@ -120,27 +144,39 @@ test('not a terminal: new sections are never read, and the report says so', asyn
   assert.match(out, /1 section not read yet/);
 });
 
-test('a terminal, and yes: the estimate, one call, the rules cached and in the report', async () => {
-  const { s, heeded, calls } = setup();
+test('sections to read and cases: one question with the ceiling, then read, judge, count', async () => {
+  const { s, heeded, calls } = setup({ replies: [answer, confirmed] });
   const { code, out, err, asked } = await heeded([], { terminal: true, reply: 'y' });
   assert.equal(code, 0);
-  assert.equal(err, '1 rule section not read yet · claude sonnet · ~4k tokens\nread 1 section · 4,000 tokens\n');
-  assert.deepEqual(asked, ['read them now? [y/N] ']);
-  assert.equal(calls(), 1);
+  assert.equal(err, '1 rule section to read, then cases to judge · claude sonnet · up to ~154k tokens\n'
+    + 'read 1 section · 4,000 tokens\njudged 1 case · 4,000 tokens\n');
+  assert.deepEqual(asked, ['go ahead? [y/N] ']);
+  assert.equal(calls(), 2);
   assert.ok(existsSync(join(s.cacheDir, 'heeded', `${sections(content)[0].hash}.json`)));
-  // A candidate isn't a violation until the judge confirms it.
-  assert.doesNotMatch(out, /✗/);
+  assert.match(out, /✗ never git add -A/);
   assert.doesNotMatch(out, /not read yet/);
 });
 
-test('a terminal, and no: nothing read, nothing spent', async () => {
-  const { heeded, calls } = setup();
-  for (const reply of ['n', '', 'whatever']) {
-    const { code, out } = await heeded([], { terminal: true, reply });
-    assert.equal(code, 0);
-    assert.match(out, /1 section not read yet/);
+test('a terminal, and no: nothing read or judged, nothing spent', async () => {
+  for (const cached of [false, true]) {
+    const { heeded, calls } = setup({ cached });
+    for (const reply of ['n', '', 'whatever']) {
+      const { code, out } = await heeded([], { terminal: true, reply });
+      assert.equal(code, 0);
+      if (!cached) assert.match(out, /1 section not read yet/);
+    }
+    assert.equal(calls(), 0);
   }
-  assert.equal(calls(), 0);
+});
+
+test('judging fails: exit 1, one line, nothing cached, the report still prints', async () => {
+  const { s, heeded } = setup({ cached: true });
+  const { code, out, err } = await heeded([], { terminal: true, env: {
+    FAKE_CLAUDE_REPLY: JSON.stringify([{ exit: 1, stderr: 'Error: rate limited\n' }]) } });
+  assert.equal(code, 1);
+  assert.match(err, /\nheeded: claude exited with code 1: Error: rate limited\n$/);
+  assert.equal(existsSync(join(s.cacheDir, 'heeded', 'verdicts')), false);
+  assert.match(out, /1 session/);
 });
 
 test('yes, and no claude to run: exit 1, one line saying what to do', async () => {
@@ -211,8 +247,10 @@ test('an edited section is asked about again; until it is read, its rules from b
     breaking: [{ tool: 'Bash', value: 'git push --force' }], keeping: [{ tool: 'Bash', value: 'git push' }] };
   const both = JSON.stringify({ is_error: false, structured_output: { sections: [{ id: '1', rules: [gitAdd, forcePush] }] },
     usage: { input_tokens: 4400, output_tokens: 300 } });
-  const after = JSON.parse((await heeded(['--json'], { terminal: true, env: { FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: both }]) } })).out);
-  assert.equal(calls(), 1);
+  const nothing = JSON.stringify({ is_error: false, structured_output: { cases: [] }, usage: { input_tokens: 4400, output_tokens: 10 } });
+  const after = JSON.parse((await heeded(['--json'], { terminal: true,
+    env: { FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: both }, { stdout: nothing }]) } })).out);
+  assert.equal(calls(), 2); // one to read, one to judge
   assert.equal(after.notRead, 0);
   assert.deepEqual(candidates(after), [['never force-push', 1], ['never git add -A', 2]]);
 });
@@ -225,8 +263,8 @@ test("a worktree's copy of a file is one section to read, not two", async () => 
       assistant({ id: `m${id}`, tool: { id: `t${id}`, name: 'Bash', input: { command: 'git add -A' } } })]);
   }
   const { err } = await heeded([], { terminal: true });
-  assert.match(err, /^1 rule section not read yet/);
-  assert.equal(calls(), 1);
+  assert.match(err, /^1 rule section to read/);
+  assert.equal(calls(), 2); // one to read, one to judge
 });
 
 test('a version read, seen again later, moves what the cache remembers forward', async () => {

@@ -9,7 +9,7 @@ import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
 const PROMPT_VERSION = 2;
-const MODEL = 'sonnet';
+export const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
  * cached by. */

@@ -7,9 +7,9 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { counter } from './check.ts';
 import { read } from './claude-code.ts';
-import { verdicts } from './judge.ts';
+import { BUDGET, type Case, estimate as judgingEstimate, JUDGE_MODEL, judge, select, verdicts } from './judge.ts';
 import { json, type Report, rules, text } from './report.ts';
-import { estimate, extract, type Pending, remember, rulesOf } from './rules.ts';
+import { estimate, extract, MODEL, type Pending, remember, rulesOf } from './rules.ts';
 
 const HELP = `heeded — did your coding agent follow its instructions?
 
@@ -37,15 +37,18 @@ interface IO {
   err: (s: string) => void;
 }
 
-/** One pass over the folder's transcripts with the rules cached so far; the sections to read. */
-async function scan(configDir: string, folder: string, cacheDir: string): Promise<{ report: Report; pending: Pending[] }> {
+/** One pass over the folder's transcripts with the rules and verdicts cached so far: the report, the sections to read,
+ * the cases waiting for the judge. */
+async function scan(configDir: string, folder: string, cacheDir: string):
+  Promise<{ report: Report; pending: Pending[]; waiting: { tool: Case[][]; judgment: Case[][] } }> {
   const count = counter(rulesOf(cacheDir), verdicts(cacheDir));
   const { unrecognized } = await read(configDir, folder, count.on);
   for (const v of count.readVersions()) remember(cacheDir, v.identity, v.section.hash, v.at);
-  return { report: { folder, configDir, unrecognized, ...count.result() }, pending: count.pending() };
+  return { report: { folder, configDir, unrecognized, ...count.result() }, pending: count.pending(), waiting: count.waiting() };
 }
 
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
+const thousands = (n: number) => n.toLocaleString('en-US');
+const plural = (n: number, word: string) => `${thousands(n)} ${word}${n === 1 ? '' : 's'}`;
 
 /** Runs heeded; resolves to the exit code: 0 done (violations included), 1 an error, 2 wrong usage. */
 export async function main(argv: string[], io: IO): Promise<number> {
@@ -80,27 +83,52 @@ export async function main(argv: string[], io: IO): Promise<number> {
   }
 }
 
-/** The report, after reading new sections if the user says so. */
+/** The report, after reading new sections and judging cases if the user says so. */
 async function run(command: string | undefined, asJson: boolean, io: IO): Promise<number> {
   const home = io.env.HOME || homedir();
   const configDir = io.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
   const cacheDir = io.env.XDG_CACHE_HOME || join(home, '.cache');
-  let { report, pending } = await scan(configDir, io.cwd, cacheDir);
+  let { report, pending, waiting } = await scan(configDir, io.cwd, cacheDir);
   let code = 0;
-  // Reading new sections spends the user's quota: only when asked on a terminal, after the estimate.
-  if (pending.length && io.terminal) {
-    // Every call costs ~4k tokens: the estimate is never under a thousand.
+  const failed = (errors: string[]) => {
+    for (const e of errors) io.err(`heeded: ${e}\n`);
+    if (errors.length) code = 1;
+  };
+  // Reading sections and judging cases spend the user's quota: only when asked on a terminal, once, after the most the
+  // run may spend. Every call costs ~4k tokens: an estimate is never under a thousand.
+  if (io.terminal && (pending.length || report.toJudge > 0)) {
     const distinct = [...new Map(pending.map((p) => [p.section.hash, p.section])).values()];
-    const k = Math.round(estimate(distinct).tokens / 1000);
-    io.err(`${plural(distinct.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
+    let picked = select(waiting.tool, waiting.judgment, BUDGET);
+    if (distinct.length) {
+      // The cases of the rules about to be read aren't known yet: the question shows the ceiling.
+      const models = MODEL === JUDGE_MODEL ? MODEL : `${MODEL} and ${JUDGE_MODEL}`;
+      const k = Math.round((estimate(distinct).tokens + BUDGET) / 1000);
+      io.err(`${plural(distinct.length, 'rule section')} to read, then cases to judge · claude ${models} · up to ~${k}k tokens\n`);
+    } else {
+      const cases = picked.length === report.toJudge ? plural(picked.length, 'case')
+        : `${thousands(picked.length)} of ${plural(report.toJudge, 'case')}`;
+      io.err(`${cases} to judge · claude ${JUDGE_MODEL} · ~${Math.round(judgingEstimate(picked).tokens / 1000)}k tokens\n`);
+    }
     // ctrl-c or ctrl-d at the question is a no.
-    const answer = await io.ask('read them now? [y/N] ').catch(() => '');
+    const answer = await io.ask('go ahead? [y/N] ').catch(() => '');
     if (/^y(es)?$/i.test(answer.trim())) {
-      const found = await extract(pending, io.env, cacheDir);
-      if (found.read) io.err(`read ${plural(found.read, 'section')} · ${found.tokens.toLocaleString('en-US')} tokens\n`);
-      for (const e of found.errors) io.err(`heeded: ${e}\n`);
-      if (found.errors.length) code = 1;
-      if (found.read) ({ report } = await scan(configDir, io.cwd, cacheDir));
+      let judging = true;
+      if (distinct.length) {
+        const found = await extract(pending, io.env, cacheDir);
+        if (found.read) io.err(`read ${plural(found.read, 'section')} · ${thousands(found.tokens)} tokens\n`);
+        failed(found.errors);
+        // The rules just read have cases of their own, chosen with the others.
+        if (found.read) {
+          ({ report, waiting } = await scan(configDir, io.cwd, cacheDir));
+          picked = select(waiting.tool, waiting.judgment, BUDGET);
+        } else judging = false;
+      }
+      if (judging && picked.length) {
+        const done = await judge(picked, io.env, cacheDir);
+        if (done.judged) io.err(`judged ${plural(done.judged, 'case')} · ${thousands(done.tokens)} tokens\n`);
+        failed(done.errors);
+        if (done.judged) ({ report } = await scan(configDir, io.cwd, cacheDir));
+      }
     }
   }
 
