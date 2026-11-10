@@ -1,11 +1,10 @@
 // From instruction files to rules: sections, the extraction call, verification, the cache.
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { applies, type Check, compile, LANGUAGES, verdict } from './check.ts';
 import type { InstructionFile } from './claude-code.ts';
+import { ask, batches } from './model.ts';
 import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
@@ -218,26 +217,13 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
   };
 }
 
-/** Items grouped into calls of at most 30,000 characters of section text; a bigger section goes alone. */
-function batches<T>(items: T[], text: (item: T) => string): T[][] {
-  const out: T[][] = [];
-  let size = Infinity;
-  for (const item of items) {
-    const length = text(item).length;
-    if (size + length > 30_000) {
-      out.push([]);
-      size = 0;
-    }
-    out[out.length - 1].push(item);
-    size += length;
-  }
-  return out;
-}
+/** Sections go to claude in calls of at most 30,000 characters of their text. */
+const BATCH = 30_000;
 
 /** What reading `sections` would cost: each call carries ~4.4k tokens of prompt and schema; the text is read once and
  * answered with about twice as much (a JSON object per rule). Fitted on real calls; the real count is shown after. */
 export function estimate(sections: Section[]): { calls: number; tokens: number } {
-  const calls = batches(sections, (s) => s.text).length;
+  const calls = batches(sections, (s) => s.text.length, BATCH).length;
   const chars = sections.reduce((n, s) => n + s.text.length, 0);
   return { calls, tokens: 4400 * calls + 3 * Math.ceil(chars / 4) };
 }
@@ -325,36 +311,6 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
   it, an echo of it, a commit message naming it). A value is the field's whole value: for Bash, a whole command line.
 `;
 
-/** `claude -p` isolated: no tools, no session saved, no settings, hooks, MCP servers or slash commands of the user's. */
-const ARGS = ['-p', '--model', MODEL, '--output-format', 'json', '--json-schema', SCHEMA, '--no-session-persistence',
-  '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '', '--settings',
-  '{"disableAllHooks":true}'];
-
-/** Runs claude in an empty folder of its own, removed after, so no project instruction file is loaded with it; null
- * when there is no claude to run. */
-async function claude(prompt: string, env: NodeJS.ProcessEnv):
-  Promise<{ code: number | null; stdout: string; stderr: string } | null> {
-  const cwd = mkdtempSync(join(tmpdir(), 'heeded-'));
-  try {
-    return await new Promise((resolve) => {
-      const child = spawn('claude', ARGS, { cwd, env });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (d) => (stdout += d));
-      child.stderr.on('data', (d) => (stderr += d));
-      child.on('error', () => resolve(null));
-      child.on('close', (code) => resolve({ code, stdout, stderr }));
-      child.stdin.on('error', () => {}); // claude may stop reading, or never start
-      child.stdin.end(prompt);
-    });
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-}
-
-/** The first line with something on it. */
-const firstLine = (text: string) => text.split('\n').find((l) => l.trim())?.trim() ?? '';
-
 /**
  * Reads the rules of the pending sections through the user's own claude, sonnet, one call per batch, and caches each
  * batch as it comes, each section remembered as its section's latest read version: an interrupted run keeps what it
@@ -369,30 +325,17 @@ export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheD
   // A text under several paths (a worktree's copy of a file) is sent once, and remembered for each.
   const byHash = new Map<string, Pending[]>();
   for (const p of pending) byHash.set(p.section.hash, [...(byHash.get(p.section.hash) ?? []), p]);
-  for (const batch of batches([...byHash.values()], (group) => group[0].section.text)) {
+  for (const batch of batches([...byHash.values()], (group) => group[0].section.text.length, BATCH)) {
     const body = batch.map(([{ section: s }], i) =>
       `<section id="${i + 1}" path="${redact(s.path.join(' › ')).replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
-    const run = await claude(`${PROMPT}\n${body.join('\n\n')}\n`, env);
-    if (!run) {
-      errors.push('claude not found. install claude code, or run heeded where claude runs.');
-      break;
-    }
-    if (run.code !== 0) {
-      errors.push(`claude exited with code ${run.code}: ${firstLine(run.stderr) || firstLine(run.stdout)}`);
+    const run = await ask(MODEL, SCHEMA, `${PROMPT}\n${body.join('\n\n')}\n`, env);
+    tokens += run.tokens;
+    if (run.error) {
+      errors.push(run.error);
+      if (run.fatal) break;
       continue;
     }
-    let out;
-    try {
-      out = JSON.parse(run.stdout);
-    } catch {}
-    const u = out?.usage ?? {};
-    tokens += [u.input_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens, u.output_tokens]
-      .reduce((n: number, t) => n + (typeof t === 'number' ? t : 0), 0);
-    if (out?.is_error === true) {
-      errors.push(`claude: ${firstLine(String(out.result ?? ''))}`);
-      continue;
-    }
-    const answered = out?.structured_output?.sections;
+    const answered = (run.output as { sections?: unknown } | undefined)?.sections;
     if (!Array.isArray(answered) || !answered.every((a) => typeof a?.id === 'string' && Array.isArray(a.rules))) {
       errors.push("claude's answer didn't match the schema");
       continue;
