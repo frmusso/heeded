@@ -1,5 +1,5 @@
 // The report: the terminal's text and the json document, from the same data.
-import type { Data } from './check.ts';
+import type { Data, RuleData } from './check.ts';
 
 /** The counts, and where they were read from. */
 export interface Report extends Data { folder: string; configDir: string; unrecognized: string[] }
@@ -17,6 +17,9 @@ const date = (iso: string) => `${MONTHS[new Date(iso).getMonth()]} ${new Date(is
 const thousands = (n: number) => n.toLocaleString('en-US');
 const plural = (n: number, word: string) => `${thousands(n)} ${word}${n === 1 ? '' : 's'}`;
 const cut = (s: string, width: number) => (s.length > width ? `${s.slice(0, width - 1)}…` : s);
+const tilde = (path: string, home: string) => (path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path);
+const paint = (color: boolean, code: number, off: number, s: string) => (color ? `\x1b[${code}m${s}\x1b[${off}m` : s);
+const notRead = (n: number) => `  ${plural(n, 'section')} not read yet: the rules in them aren't checked`;
 
 /** Floored, so never 100% with a violation; and never 0% with a case kept. */
 function kept(applied: number, broken: number): string {
@@ -40,18 +43,18 @@ function columns(rows: string[][]): string[] {
 
 /** The report for a terminal, `columns` wide. */
 export function text(r: Report, o: TextOptions): string {
-  const tilde = (path: string) => (path === o.home || path.startsWith(`${o.home}/`) ? `~${path.slice(o.home.length)}` : path);
-  const paint = (code: number, off: number, s: string) => (o.color ? `\x1b[${code}m${s}\x1b[${off}m` : s);
+  const home = (path: string) => tilde(path, o.home);
+  const color = (code: number, off: number, s: string) => paint(o.color, code, off, s);
   const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.map((l) => cut(l, o.columns))
     .join('\n')).join('\n\n')}\n`.replace(/^( {2})([✗✓○])/gm, (_, indent, mark) =>
-    indent + (mark === '✗' ? paint(31, 39, mark) : mark === '✓' ? paint(32, 39, mark) : paint(2, 22, mark)))
-    .replace(/^( {6}[a-z]{3} \d.*)$/gm, (line) => paint(2, 22, line));
+    indent + (mark === '✗' ? color(31, 39, mark) : mark === '✓' ? color(32, 39, mark) : color(2, 22, mark)))
+    .replace(/^( {6}[a-z]{3} \d.*)$/gm, (line) => color(2, 22, line));
   const unrecognized = r.unrecognized.length
     ? [`  ${plural(r.unrecognized.length, 'transcript')} unrecognized: claude code may have changed its format`] : [];
-  if (!r.sessions) return out([[`  no claude code transcripts for ${tilde(r.folder)} in ${tilde(r.configDir)}`, ...unrecognized]]);
+  if (!r.sessions) return out([[`  no claude code transcripts for ${home(r.folder)} in ${home(r.configDir)}`, ...unrecognized]]);
 
   const span = r.from && r.to ? ` · ${date(r.from) === date(r.to) ? date(r.from) : `${date(r.from)} – ${date(r.to)}`}` : '';
-  const header = `  ${tilde(r.folder)} · ${plural(r.sessions, 'session')}, ${plural(r.subagents, 'subagent')}${span}`;
+  const header = `  ${home(r.folder)} · ${plural(r.sessions, 'session')}, ${plural(r.subagents, 'subagent')}${span}`;
   if (!r.files.length) return out([[header, '  no instructions recorded', ...unrecognized]]);
 
   const checked = r.rules.filter((x) => ['broken', 'kept', 'never-applied'].includes(x.status));
@@ -91,8 +94,43 @@ export function text(r: Report, o: TextOptions): string {
     .filter(Boolean).join(', ');
   const end = [
     ...(notChecked ? [`  ${notChecked}, not checked yet: heeded rules`] : []),
-    ...(r.notRead ? [`  ${plural(r.notRead, 'section')} not read yet: the rules in them aren't checked`] : []),
+    ...(r.notRead ? [notRead(r.notRead)] : []),
     ...unrecognized,
   ];
   return out([[header, counts], rules, depth, end]);
+}
+
+/** How a rule is checked, in words: a tool check shows every pattern, whole. */
+function how(x: RuleData): string {
+  if (x.status === 'judgment') return 'needs a judge';
+  if (x.status === 'demoted') return x.reason!;
+  const c = x.check!;
+  if (c.language) return `language ${c.language}`;
+  const tool = c.when?.tool;
+  return [
+    `${tool === undefined ? 'any tool' : /^\^\w+\$$/.test(tool) ? tool.slice(1, -1) : `tool ${tool}`}${c.field ? ` ${c.field}` : ''}`,
+    c.when?.value !== undefined && `when ${c.when.value}`,
+    c.broken?.tool !== undefined && `broken tool ${c.broken.tool}`,
+    c.broken?.value !== undefined && `broken ${c.broken.value}`,
+    c.ignoreCase && 'ignoring case',
+  ].filter(Boolean).join('  ');
+}
+
+/** The rules found, by file, and how each one is checked. Never cut to the terminal's width: the patterns are what this
+ * list is for. */
+export function rules(r: Report, o: { color: boolean; home: string }): string {
+  const where = (path: string) => (path.startsWith(`${r.folder}/`) ? path.slice(r.folder.length + 1) : tilde(path, o.home));
+  const width = Math.max(...r.rules.map((x) => x.name.length));
+  const lines = ['', `  ${tilde(r.folder, o.home)} · ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')}`, ''];
+  for (const file of r.files) {
+    const mine = r.rules.filter((x) => x.files[0] === file);
+    if (mine.length) lines.push(`  ${where(file)}`);
+    for (const x of mine) {
+      const mark = x.status === 'judgment' ? paint(o.color, 2, 22, '·') : x.status === 'demoted' ? paint(o.color, 33, 39, '!')
+        : paint(o.color, 32, 39, '✓');
+      lines.push(`    ${mark} ${x.name.padEnd(width + 2)}${how(x)}`);
+    }
+  }
+  if (r.notRead) lines.push('', notRead(r.notRead));
+  return `${lines.join('\n')}\n`;
 }

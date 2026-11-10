@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { RuleData } from '../src/check.ts';
-import { json, type Report, text } from '../src/report.ts';
+import { json, type Report, rules, text } from '../src/report.ts';
 
 const buckets = (counts: [number, number][]) => counts.map(([applied, broken], i) =>
   ({ from: [0, 100_000, 200_000, 400_000][i], to: [100_000, 200_000, 400_000, null][i], applied, broken }));
@@ -131,4 +131,45 @@ test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of 
 
   1 rule needs a judge, 1 demoted, not checked yet: heeded rules
 `);
+});
+
+// heeded rules, over one rule of each kind.
+const local = '/home/someone/repos/billing/CLAUDE.local.md';
+const found: Report = {
+  ...sketch, notRead: 0,
+  files: ['/home/someone/.claude/CLAUDE.md', local, '/home/someone/repos/billing/CLAUDE.md'],
+  rules: [
+    r('never git add -A', 'broken', 3, 1, { files: [local, '/home/someone/repos/billing/CLAUDE.md'],
+      check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+add\\b' }, broken: { value: '\\s(-A|--all)\\b' } } }),
+    r('clickup is read-only', 'kept', 4, 0, { files: ['/home/someone/.claude/CLAUDE.md'],
+      check: { when: { tool: 'mcp__.*clickup.*' }, broken: { tool: '_(create|update|delete)_' }, ignoreCase: true } }),
+    r('always talk to me in italian', 'never-applied', 0, 0, { files: [local], check: { language: 'it' } }),
+    r('failing test first', 'judgment', 0, 0, { files: [local] }),
+    r('never kill billing', 'demoted', 0, 0, { files: [local], reason: 'failed its examples: keeps "pkill -f billingd-test"' }),
+  ],
+};
+const listed = `
+  ~/repos/billing · 3 files · 5 rules
+
+  ~/.claude/CLAUDE.md
+    ✓ clickup is read-only          tool mcp__.*clickup.*  broken tool _(create|update|delete)_  ignoring case
+  CLAUDE.local.md
+    ✓ never git add -A              Bash command  when \\bgit\\s+add\\b  broken \\s(-A|--all)\\b
+    ✓ always talk to me in italian  language it
+    · failing test first            needs a judge
+    ! never kill billing            failed its examples: keeps "pkill -f billingd-test"
+`;
+
+test('heeded rules: by file, each rule under the first file that has it, with how it is checked, whole', () => {
+  assert.equal(rules(found, { color: false, home: '/home/someone' }), listed);
+});
+
+test('heeded rules in colour: the marks', () => {
+  assert.equal(rules(found, { color: true, home: '/home/someone' }),
+    listed.replace(/✓/g, '\x1b[32m✓\x1b[39m').replace('    · ', '    \x1b[2m·\x1b[22m ').replace('!', '\x1b[33m!\x1b[39m'));
+});
+
+test('heeded rules with sections not read yet says so', () => {
+  assert.ok(rules({ ...found, notRead: 2 }, { color: false, home: '/home/someone' })
+    .endsWith(`${listed}\n  2 sections not read yet: the rules in them aren't checked\n`));
 });
