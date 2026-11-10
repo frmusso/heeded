@@ -111,7 +111,7 @@ test('a terminal, cases waiting: the cases and what they cost, judged on yes; a 
   const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
   const { code, out, err, asked } = await heeded([], { terminal: true });
   assert.equal(code, 0);
-  assert.equal(err, '1 case to judge · claude sonnet · ~4k tokens\njudged 1 case · 4,000 tokens\n');
+  assert.equal(err, '1 case to judge · claude haiku · ~4k tokens\njudged 1 case · 4,000 tokens\n');
   assert.deepEqual(asked, ['go ahead? [y/N] ']);
   assert.equal(calls(), 1);
   assert.match(out, /\n {2}✗ never git add -A {2}kept 0% of 1 {2}broken 1× {2}last /);
@@ -152,7 +152,7 @@ test('sections to read and cases: one question with the ceiling, then read, judg
   const { s, heeded, calls } = setup({ replies: [answer, confirmed] });
   const { code, out, err, asked } = await heeded([], { terminal: true, reply: 'y' });
   assert.equal(code, 0);
-  assert.equal(err, '1 rule section to read, then cases to judge · claude sonnet · up to ~154k tokens\n'
+  assert.equal(err, '1 rule section to read, then cases to judge · claude sonnet and haiku · up to ~154k tokens\n'
     + 'read 1 section · 4,000 tokens\njudged 1 case · 4,000 tokens\n');
   assert.deepEqual(asked, ['go ahead? [y/N] ']);
   assert.equal(calls(), 2);

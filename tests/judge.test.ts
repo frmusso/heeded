@@ -182,7 +182,7 @@ function claude(replies: { stdout?: string; exit?: number; stderr?: string }[]) 
   return { s, env, calls };
 }
 
-test("one isolated claude -p call per batch: the judge's model and schema, the prompt on stdin", async () => {
+test("one isolated claude -p call per batch: the judge's model (haiku) and schema, the prompt on stdin", async () => {
   const { s, env, calls } = claude([{ stdout: answer([]) }]);
   const key = `gh${'p_'}Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56Qr78`;
   const deploy = judged('never deploy unless asked', `deploy with ${key}`);
@@ -190,7 +190,7 @@ test("one isolated claude -p call per batch: the judge's model and schema, the p
   await judge([first, kase(deploy, 'you: ship it\ncall Bash: railway up')], env, s.cacheDir);
   const [call] = calls();
   const schema = call.argv[6];
-  assert.deepEqual(call.argv, ['-p', '--model', 'sonnet', '--output-format', 'json', '--json-schema', schema,
+  assert.deepEqual(call.argv, ['-p', '--model', 'haiku', '--output-format', 'json', '--json-schema', schema,
     '--no-session-persistence', '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '',
     '--settings', '{"disableAllHooks":true}']);
   assert.deepEqual(JSON.parse(schema).properties.cases.items.properties.verdict, { enum: ['broken', 'kept', 'none'] });

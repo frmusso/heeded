@@ -101,7 +101,7 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
     let picked = select(waiting.tool, waiting.judgment, BUDGET);
     if (distinct.length) {
       // The cases of the rules about to be read aren't known yet: the question shows the ceiling.
-      const models = MODEL === JUDGE_MODEL ? MODEL : `${MODEL} and ${JUDGE_MODEL}`;
+      const models = [...new Set([MODEL, JUDGE_MODEL])].join(' and ');
       const k = Math.round((estimate(distinct).tokens + BUDGET) / 1000);
       io.err(`${plural(distinct.length, 'rule section')} to read, then cases to judge · claude ${models} · up to ~${k}k tokens\n`);
     } else {

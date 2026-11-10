@@ -10,7 +10,7 @@ import { type Rule, write } from './rules.ts';
 
 /** Part of every case's key: a new prompt or model judges every case again. */
 const JUDGE_VERSION = 2;
-export const JUDGE_MODEL = 'sonnet';
+export const JUDGE_MODEL = 'haiku';
 
 /** An excerpt's size in characters: the whole; a call's or a reply's line; the user's words (they hold the
  * permissions) and the case itself. */
