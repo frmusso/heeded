@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { json, type Report } from '../src/report.ts';
+import type { RuleData } from '../src/check.ts';
+import { json, type Report, text } from '../src/report.ts';
 
 const buckets = (counts: [number, number][]) => counts.map(([applied, broken], i) =>
   ({ from: [0, 100_000, 200_000, 400_000][i], to: [100_000, 200_000, 400_000, null][i], applied, broken }));
@@ -33,4 +34,101 @@ test('the json document: heeded 1 first, then the report, two-space indented', (
 
 test('the json document of an empty history', () => {
   assert.deepEqual(JSON.parse(json(empty)), { heeded: 1, ...empty });
+});
+
+// The sketch of the report, with numbers that give its percentages.
+const r = (name: string, status: RuleData['status'], applied: number, broken: number, more: Partial<RuleData> = {}): RuleData => ({
+  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], status, applied, broken,
+  afterCompaction: { applied: 0, broken: 0 }, byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]), tokens: 5, evidence: [],
+  ...more,
+});
+const seen = (at: string, session: string, text: string) => ({ at, session: `${session}-0000-4000-8000-000000000000`, agent: null, text });
+const sketch: Report = {
+  ...empty, folder: '/home/someone/repos/billing', from: '2026-10-11T12:00:00Z', to: '2026-11-10T12:00:00Z', sessions: 76,
+  subagents: 412, files: ['a', 'b', 'c'],
+  rules: [
+    r('never git add -A', 'broken', 214, 9, { afterCompaction: { applied: 12, broken: 3 }, evidence: [
+      seen('2026-11-08T12:00:00Z', '19df6c20', 'git add -A && git commit -m "fix: …"'),
+      seen('2026-11-02T12:00:00Z', '8c0e8fab', 'git add -A'), seen('2026-10-29T12:00:00Z', '4f1c22d0', 'git add -A'),
+      seen('2026-10-20T12:00:00Z', '0a1b2c3d', 'git add -A')] }),
+    r('always talk to me in italian', 'broken', 3812, 152, { afterCompaction: { applied: 410, broken: 127 }, evidence: [
+      seen('2026-11-10T09:00:00Z', 'e7128125', 'en: "Sure — here\'s the plan for the …"')] }),
+    r('never force-push', 'kept', 61, 0),
+    r('never kill billing', 'never-applied', 0, 0, { tokens: 40 }),
+    r('failing test first', 'judgment', 0, 0),
+    r('ask before spending', 'judgment', 0, 0),
+  ],
+  byDepth: buckets([[2310, 46], [900, 27], [300, 27], [100, 16]]),
+};
+const options = { columns: 80, color: false, now: new Date('2026-11-10T15:00:00Z'), home: '/home/someone' };
+
+const at80 = `
+  ~/repos/billing · 76 sessions, 412 subagents · oct 11 – nov 10
+  3 files · 6 rules · 4 checked · 2 need a judge
+
+  ✗ never git add -A             kept 95% of 214    broken 9×    last 2 days ago
+      nov 8   19df6c20  git add -A && git commit -m "fix: …"
+      nov 2   8c0e8fab  git add -A
+      oct 29  4f1c22d0  git add -A
+  ✗ always talk to me in itali…  kept 96% of 3,812  broken 152×  last today
+      after compaction kept 69% of 410
+      nov 10  e7128125  en: "Sure — here's the plan for the …"
+  ✓ never force-push             kept 100% of 61
+  ○ never kill billing           never applied      ~40 tokens every session
+
+  kept by context depth   0–100k   100–200k   200–400k   400k+
+                             98%        97%        91%     84%
+
+  2 rules need a judge, not checked yet: heeded rules
+`;
+
+test('the report at 80 columns: the names are cut to fit', () => {
+  assert.equal(text(sketch, options), at80);
+});
+
+test('the report at 120 columns: names whole', () => {
+  const at120 = at80.replace('always talk to me in itali…  ', 'always talk to me in italian  ')
+    .replace(/^( {2}[✗✓○] )(never [^ ]+(?: [^ ]+)*?)( {2,})/gm, (_, a, name, gap) => a + name + gap + ' ');
+  assert.equal(text(sketch, { ...options, columns: 120 }), at120);
+});
+
+test('in colour: the marks, and the evidence dimmed', () => {
+  const coloured = at80.replace(/✗/g, '\x1b[31m✗\x1b[39m').replace('✓', '\x1b[32m✓\x1b[39m').replace('○', '\x1b[2m○\x1b[22m')
+    .replace(/^( {6}(?:nov|oct) .*)$/gm, '\x1b[2m$1\x1b[22m');
+  assert.equal(text(sketch, { ...options, color: true }), coloured);
+});
+
+test('no transcripts: one line naming the folder and the config dir', () => {
+  assert.equal(text(empty, options), '\n  no claude code transcripts for ~/repos/app in ~/.claude\n');
+});
+
+test('sessions without instruction files: one line', () => {
+  assert.equal(text({ ...empty, sessions: 3, from: '2026-11-10T12:00:00Z', to: '2026-11-10T12:00:00Z' }, options),
+    '\n  ~/repos/app · 3 sessions, 0 subagents · nov 10\n  no instructions recorded\n');
+});
+
+test('transcripts not recognized, and sections not read yet: one line each', () => {
+  const out = text({ ...sketch, unrecognized: ['a.jsonl', 'b.jsonl'], notRead: 14 }, options);
+  assert.ok(out.endsWith('  2 rules need a judge, not checked yet: heeded rules\n'
+    + '  14 sections not read yet: the rules in them aren\'t checked\n'
+    + '  2 transcripts unrecognized: claude code may have changed its format\n'), out);
+});
+
+test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of each, demoted rules', () => {
+  const out = text({ ...sketch, sessions: 1, subagents: 1, files: ['a'],
+    rules: [r('never sudo', 'broken', 1000, 999, { evidence: [seen('2026-11-09T12:00:00Z', 'aaaaaaaa', 'sudo ls')] }),
+      r('failing test first', 'judgment', 0, 0), r('never rm', 'demoted', 0, 0)],
+    byDepth: buckets([[1000, 999], [19, 0], [0, 0], [0, 0]]) }, options);
+  assert.equal(out, `
+  ~/repos/billing · 1 session, 1 subagent · oct 11 – nov 10
+  1 file · 3 rules · 1 checked · 1 need a judge · 1 demoted
+
+  ✗ never sudo  kept 1% of 1,000  broken 999×  last yesterday
+      nov 9   aaaaaaaa  sudo ls
+
+  kept by context depth   0–100k   100–200k   200–400k   400k+
+                              1%          –          –       –
+
+  1 rule needs a judge, 1 demoted, not checked yet: heeded rules
+`);
 });
