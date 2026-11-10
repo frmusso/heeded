@@ -4,8 +4,14 @@ import { createReadStream, type Dirent } from 'node:fs';
 import { readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
+export interface InstructionFile { path: string; type: string; content: string }
 export type Event =
-  | { kind: 'transcript'; session: string; agent: string | null };
+  | { kind: 'transcript'; session: string; agent: string | null }
+  | { kind: 'instructions'; files: InstructionFile[]; replace: boolean }
+  | { kind: 'compaction'; trigger: string; preTokens: number }
+  | { kind: 'call'; id: string; tool: string; input: Record<string, unknown>; at: string; depth: number; compactions: number }
+  | { kind: 'reply'; id: string; text: string; at: string; depth: number; compactions: number };
+type Reply = Extract<Event, { kind: 'reply' }>;
 
 /** A folder's entries by name; none when it doesn't exist. */
 async function entries(dir: string): Promise<Dirent[]> {
@@ -34,24 +40,104 @@ async function* lines(path: string): AsyncGenerator<string> {
   if (rest) yield rest;
 }
 
-/**
- * Emits the session's events when it ran in the folder: decided by the first line that records a `cwd`, the only line
- * parsed for it. A file that never records one stays in scope, since its project folder's name already matched.
- */
-async function readMain(path: string, session: string, inside: (cwd: string) => boolean, emit: (e: Event) => void) {
-  for await (const line of lines(path)) {
-    if (!line.includes('"cwd":"')) continue;
-    let cwd: unknown;
-    try {
-      cwd = JSON.parse(line).cwd;
-    } catch {
-      continue;
-    }
-    if (typeof cwd !== 'string') continue;
-    if (!inside(cwd)) return false;
-    break;
+const isFile = (f: unknown): f is InstructionFile => typeof f === 'object' && f !== null
+  && typeof (f as InstructionFile).path === 'string' && typeof (f as InstructionFile).type === 'string'
+  && typeof (f as InstructionFile).content === 'string';
+
+/** What a transcript's earlier lines tell its later ones; `reply` is the message being written, until it ends. */
+interface State { compactions: number; replace: boolean; depth: number; replies: boolean; reply: Reply | null }
+
+function flush(state: State, emit: (e: Event) => void) {
+  if (state.reply) emit(state.reply);
+  state.reply = null;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const tokens = (v: unknown) => (typeof v === 'number' ? v : 0);
+
+/** The events of one line. Only the lines heeded needs are parsed, found by a substring first. */
+function onLine(line: string, state: State, out: (e: Event) => void) {
+  if (!line.includes('"type":"assistant"') && !line.includes('"type":"instructions"')
+    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"')) return;
+  let o;
+  try {
+    o = JSON.parse(line);
+  } catch {
+    return;
   }
-  emit({ kind: 'transcript', session, agent: null });
+  // A message's reply goes out before anything that follows it.
+  const emit = (e: Event) => {
+    flush(state, out);
+    out(e);
+  };
+  const a = o.attachment;
+  const meta = o.compactMetadata;
+  const m = o.message;
+  if (o.type === 'assistant' && isObject(m) && Array.isArray(m.content) && typeof o.timestamp === 'string') {
+    // The context the request was sent with: every line of a message carries the same usage.
+    const u = m.usage;
+    if (isObject(u)) state.depth = tokens(u.input_tokens) + tokens(u.cache_creation_input_tokens) + tokens(u.cache_read_input_tokens);
+    for (const b of m.content) {
+      // Replies are what the user reads: a subagent's text goes to the agent that called it.
+      if (b?.type === 'text' && typeof b.text === 'string' && typeof m.id === 'string' && state.replies) {
+        if (state.reply?.id === m.id) {
+          state.reply.text += `\n${b.text}`;
+        } else {
+          flush(state, out);
+          state.reply = { kind: 'reply', id: m.id, text: b.text, at: o.timestamp, depth: state.depth, compactions: state.compactions };
+        }
+      } else if (b?.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string' && isObject(b.input)) {
+        emit({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions });
+      }
+    }
+  } else if (o.type === 'attachment' && a?.type === 'instructions' && Array.isArray(a.files)) {
+    // After a compaction Claude Code records every file in effect again: they replace the ones before.
+    emit({ kind: 'instructions', files: a.files.filter(isFile), replace: state.replace });
+    state.replace = false;
+  } else if (o.type === 'attachment' && a?.type === 'nested_memory' && isFile(a.content)) {
+    const { path, type, content } = a.content;
+    emit({ kind: 'instructions', files: [{ path, type, content }], replace: false });
+  } else if (o.type === 'system' && o.subtype === 'compact_boundary' && typeof meta?.trigger === 'string'
+    && typeof meta.preTokens === 'number') {
+    emit({ kind: 'compaction', trigger: meta.trigger, preTokens: meta.preTokens });
+    state.compactions++;
+    state.replace = true;
+  }
+}
+
+/**
+ * Streams one transcript into events, after its `transcript` event. A main transcript (`inside` given) is read only
+ * when it ran in the folder: decided by the first line that records a `cwd`, the only line parsed for it; a file that
+ * never records one stays in scope, since its project folder's name already matched. Events of the lines before that
+ * one wait for the decision.
+ */
+async function readFile(path: string, session: string, agent: string | null, inside: ((cwd: string) => boolean) | null,
+  emit: (e: Event) => void): Promise<boolean> {
+  let decided = inside === null;
+  const held: Event[] = [];
+  if (decided) emit({ kind: 'transcript', session, agent });
+  const out = (e: Event) => (decided ? emit(e) : held.push(e));
+  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null };
+  for await (const line of lines(path)) {
+    if (!decided && line.includes('"cwd":"')) {
+      let cwd: unknown;
+      try {
+        cwd = JSON.parse(line).cwd;
+      } catch {}
+      if (typeof cwd === 'string') {
+        if (!inside!(cwd)) return false;
+        decided = true;
+        emit({ kind: 'transcript', session, agent });
+        held.forEach(emit);
+      }
+    }
+    onLine(line, state, out);
+  }
+  flush(state, out);
+  if (!decided) {
+    emit({ kind: 'transcript', session, agent });
+    held.forEach(emit);
+  }
   return true;
 }
 
@@ -70,10 +156,11 @@ export async function read(configDir: string, folder: string, emit: (e: Event) =
     for (const file of await entries(project)) {
       if (!file.isFile() || !file.name.endsWith('.jsonl')) continue;
       const session = file.name.slice(0, -'.jsonl'.length);
-      if (!(await readMain(join(project, file.name), session, inside, emit))) continue;
-      for (const sub of await entries(join(project, session, 'subagents'))) {
+      if (!(await readFile(join(project, file.name), session, null, inside, emit))) continue;
+      const subagents = join(project, session, 'subagents');
+      for (const sub of await entries(subagents)) {
         if (!sub.isFile() || !sub.name.startsWith('agent-') || !sub.name.endsWith('.jsonl')) continue;
-        emit({ kind: 'transcript', session, agent: sub.name.slice('agent-'.length, -'.jsonl'.length) });
+        await readFile(join(subagents, sub.name), session, sub.name.slice('agent-'.length, -'.jsonl'.length), null, emit);
       }
     }
   }
