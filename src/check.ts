@@ -2,7 +2,7 @@
 import type { Event, InstructionFile } from './claude-code.ts';
 import { redact } from './redact.ts';
 import { commands, type Simple } from './shell.ts';
-import type { Pending, Rule, Unread } from './rules.ts';
+import type { Pending, Rule, Version } from './rules.ts';
 
 /** The most common words of each language a reply can be detected in. */
 const STOPWORDS: Record<string, string> = {
@@ -220,7 +220,7 @@ function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, c: Compiled | n
  * Counts, over a stream of events, how often each rule applied and how often it was broken. Each transcript starts with
  * no file in effect; the rules in effect are those of the files its `instructions` events recorded.
  */
-export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unread: Unread[] } | null) {
+export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; versions: Version[] } | null) {
   const tallies = new Map<string, Tally>();
   let inEffect = new Map<string, InstructionFile>();
   let checked: Tally[] = [];
@@ -229,9 +229,10 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unr
   const seen = new Set<string>();
   let session = '';
   let agent: string | null = null;
-  // Sections not read yet, one per version of each section, and those of the files in effect now.
-  const candidates = new Map<string, Unread & { at: string }>();
-  let current: (Unread & { at: string })[] = [];
+  // Every version of every section seen, with the last time it was in effect during a call or reply; and those of the
+  // files in effect now.
+  const versions = new Map<string, Version & { at: string }>();
+  let current: (Version & { at: string })[] = [];
   const files = new Set<string>();
   let sessions = 0;
   let subagents = 0;
@@ -247,11 +248,11 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unr
       const found = rulesOf(file);
       if (!found) continue;
       files.add(file.path);
-      for (const u of found.unread) {
-        const key = `${u.identity}\0${u.section.hash}`;
-        let c = candidates.get(key);
-        if (!c) candidates.set(key, (c = { ...u, at: '' }));
-        current.push(c);
+      for (const v of found.versions) {
+        const key = `${v.identity}\0${v.section.hash}`;
+        let seen = versions.get(key);
+        if (!seen) versions.set(key, (seen = { ...v, at: '' }));
+        current.push(seen);
       }
       for (const rule of found.rules) {
         let t = tallies.get(rule.id);
@@ -270,15 +271,28 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unr
     }
   }
 
+  /** Of each section, the version in effect latest. */
+  function latest(): (Version & { at: string })[] {
+    const last = new Map<string, Version & { at: string }>();
+    for (const v of versions.values()) {
+      const l = last.get(v.identity);
+      if (!l || v.at > l.at || (v.at === l.at && v.read)) last.set(v.identity, v);
+    }
+    return [...last.values()];
+  }
+
   /**
-   * The sections to read: of each section, the version in effect latest, unless a version of it read already was in
-   * effect as late. The others take that version's rules meanwhile.
+   * The sections to read: of each section, the version in effect latest when it wasn't read, unless a version of it
+   * read already was in effect as late. The others take that version's rules meanwhile.
    */
   function pending(): Pending[] {
-    const latest = new Map<string, Unread & { at: string }>();
-    for (const c of candidates.values()) if (!latest.has(c.identity) || c.at > latest.get(c.identity)!.at) latest.set(c.identity, c);
-    return [...latest.values()].filter((c) => c.readAt === null || c.at > c.readAt)
+    return latest().filter((v) => !v.read && (v.readAt === null || v.at > v.readAt))
       .map(({ section, identity, at }) => ({ section, identity, at }));
+  }
+
+  /** The versions read, with when they were last in effect: what the cache remembers moves forward with them. */
+  function readVersions(): Pending[] {
+    return latest().filter((v) => v.read && v.at).map(({ section, identity, at }) => ({ section, identity, at }));
   }
 
   return {
@@ -323,6 +337,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unr
     },
 
     pending,
+    readVersions,
 
     result(): Data {
       const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence }): RuleData => ({
@@ -353,7 +368,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unr
           sum[i].broken += c.broken;
         });
       }
-      return { from, to, sessions, subagents, files: [...files], notRead: pending().length, rules, byDepth: buckets(sum) };
+      return { from, to, sessions, subagents, files: [...files], notRead: new Set(pending().map((p) => p.section.hash)).size, rules, byDepth: buckets(sum) };
     },
   };
 }

@@ -12,19 +12,52 @@ export interface Simple {
   text: string;
 }
 
-/** The quoted text opened at `i`: where it ends (past its closing quote, or the end of the line), its content, and the
- * quotes as they stay in what the command does (one when it is left open). */
-function quoted(line: string, i: number): { end: number; content: string; quotes: string } {
+/** A command substitution: `$( … )` or a backtick pair, as written, and the command line inside it. */
+interface Substitution { text: string; inner: string }
+
+/** Where the substitution opened at `i` ends: past its closing `)` or backtick, its quotes and nested parentheses read
+ * as a shell reads them; the end of the line when it is left open. */
+function substitution(line: string, i: number): Substitution & { end: number } {
+  let j = i + 1;
+  if (line[i] === '`') {
+    while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+  } else {
+    for (let depth = 0; j < line.length; j++) {
+      const c = line[j];
+      if (c === '\\') j++;
+      else if (c === "'" || c === '"') j = quoted(line, j).end - 1;
+      else if (c === '`') j = substitution(line, j).end - 1;
+      else if (c === '(') depth++;
+      else if (c === ')' && --depth === 0) break;
+    }
+  }
+  const end = Math.min(j + 1, line.length);
+  // $(( … )) is arithmetic, not a command.
+  const inner = line.startsWith('$((', i) ? '' : line.slice(line[i] === '`' ? i + 1 : i + 2, j);
+  return { end, text: line.slice(i, end), inner };
+}
+
+/** The quoted text opened at `i`: where it ends (past its closing quote, or the end of the line), its content, the
+ * quotes as they stay in what the command does (one when it is left open), and the substitutions in a `"…"`. */
+function quoted(line: string, i: number): { end: number; content: string; quotes: string; subs: Substitution[] } {
   const open = line[i] === '$' ? "$'" : line[i];
   const close = open.at(-1)!;
+  const subs: Substitution[] = [];
   let j = i + open.length;
   while (j < line.length && line[j] !== close) {
-    // In "…" a backslash escapes only these; in $'…' it escapes anything; in '…' nothing.
+    // In "…" a backslash escapes only these, and $( … ) and backticks run commands; in $'…' a backslash escapes
+    // anything; in '…' nothing is special.
+    if (open === '"' && (line.startsWith('$(', j) || line[j] === '`')) {
+      const sub = substitution(line, j);
+      subs.push(sub);
+      j = sub.end;
+      continue;
+    }
     if (line[j] === '\\' && (open === "$'" || (open === '"' && '"\\$`'.includes(line[j + 1] ?? '')))) j++;
     j++;
   }
   const closed = j < line.length;
-  return { end: closed ? j + 1 : line.length, content: line.slice(i + open.length, j), quotes: closed ? open + close : open };
+  return { end: closed ? j + 1 : line.length, content: line.slice(i + open.length, j), quotes: closed ? open + close : open, subs };
 }
 
 /**
@@ -60,25 +93,35 @@ function heredocs(line: string): { text: string; bodies: { at: number; body: str
 }
 
 /**
- * A command that runs what it carries: a shell given only options (`bash -c '…'`, `sh <<EOF`), `ssh` or `eval`, after
- * optional assignments and `sudo`, `env`, `nohup` or `time`. A shell given a script (`bash run.sh "x"`) is not one.
+ * A command that runs what it carries: a shell given `-c` (`bash -c '…'`, `docker exec app sh -c '…'`) or only options
+ * and a heredoc (`sh <<EOF`), `ssh`, `eval`; wherever it sits in the command, its path optional. A shell given a script
+ * (`bash run.sh "x"`) is not one.
  */
-const WRAPPER = /^(?:\w+=\S*\s+|(?:sudo|env|nohup|time)\s+)*(?:(?:sh|bash|zsh|dash)(?:\s+-[a-zA-Z]+)*\s*(?:$|[<'"$])|ssh\s|eval\s)/;
+const SHELL = String.raw`(?:^|\s)(?:\S*/)?(?:sh|bash|zsh|dash)`;
+const WRAPPER = new RegExp(String.raw`${SHELL}\s(?:.*\s)?-[a-zA-Z]*c\b|${SHELL}(?:\s+-\S+)*\s*(?:$|<<)|(?:^|\s)(?:ssh|eval)\s`);
+
+/** Shell syntax that may open a simple command without being part of what it runs. */
+const SYNTAX = /^(?:[({!]\s*|(?:if|then|else|elif|do|while|until)\s+)+/;
 
 export function commands(raw: string): Simple[] {
   const { text: line, bodies } = heredocs(raw);
   const out: Simple[] = [];
   let does = '';
   let carried: string[] = [];
+  let inner: Simple[] = []; // the commands of its substitutions
   let start = 0;
   const close = (end: number, next: number) => {
-    for (const b of bodies) if (b.at >= start && b.at < end) carried.push(b.body);
-    if (does.trim()) {
-      out.push({ does: does.trim(), carries: carried.join('\n'), text: line.slice(start, end).trim() });
-      if (WRAPPER.test(does.trim())) for (const c of carried) out.push(...commands(c));
+    // Heredoc bodies first: a commit message written through one is what the command carries, from its first line.
+    const carries = [...bodies.filter((b) => b.at >= start && b.at < end).map((b) => b.body), ...carried].filter(Boolean);
+    const command = does.trim().replace(SYNTAX, '');
+    if (command) {
+      out.push({ does: command, carries: carries.join('\n'), text: line.slice(start, end).trim() });
+      if (WRAPPER.test(command)) for (const c of carries) out.push(...commands(c));
+      out.push(...inner);
     }
     does = '';
     carried = [];
+    inner = [];
     start = next;
   };
   let i = 0;
@@ -88,10 +131,20 @@ export function commands(raw: string): Simple[] {
     if (c === "'" || c === '"' || two === "$'") {
       const q = quoted(line, i);
       does += q.quotes;
-      carried.push(q.content);
+      for (const sub of q.subs) inner.push(...commands(sub.inner));
+      // A quoted text that is one substitution carries what its commands carry: `"$(printf 'feat: x')"` carries the
+      // message, not the command that prints it.
+      const only = q.subs.length === 1 && q.content.trim() === q.subs[0].text;
+      carried.push(only ? commands(q.subs[0].inner).map((x) => x.carries).filter(Boolean).join('\n') : q.content);
       i = q.end;
+    } else if (two === '$(' || c === '`') {
+      const sub = substitution(line, i);
+      does += sub.text;
+      inner.push(...commands(sub.inner));
+      i = sub.end;
     } else if (c === '\\') {
-      does += two;
+      // A backslash before a line break continues the line; before anything else it escapes it.
+      if (line[i + 1] !== '\n') does += two;
       i += 2;
     } else if (c === '#' && (i === start || /\s/.test(line[i - 1]))) {
       // A comment runs to the end of its line.

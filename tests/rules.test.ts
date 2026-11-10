@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { load, remember, rulesOf, save, sections, verify } from '../src/rules.ts';
@@ -132,8 +133,9 @@ test("a file's rules: its cached sections give rules, the others are unread; mem
   save(s.cacheDir, section.hash, [gitAdd, { ...gitAdd, quote: 'not in the section' }]);
   const of = rulesOf(s.cacheDir);
   const a = of({ path: '/a/CLAUDE.md', type: 'Project', content });
-  assert.deepEqual(a, { rules: [verify(gitAdd, section)],
-    unread: [{ section: other, identity: JSON.stringify(['/a/CLAUDE.md', [], '## other']), readAt: null }] });
+  assert.deepEqual(a, { rules: [verify(gitAdd, section)], versions: [
+    { section, identity: JSON.stringify(['/a/CLAUDE.md', [], '## git']), read: true, readAt: null },
+    { section: other, identity: JSON.stringify(['/a/CLAUDE.md', [], '## other']), read: false, readAt: null }] });
   assert.equal(of({ path: '/a/CLAUDE.md', type: 'Project', content }), a);
   assert.deepEqual(of({ path: '/b/CLAUDE.md', type: 'Project', content })!.rules, a!.rules);
   assert.equal(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), null);
@@ -166,9 +168,9 @@ test('a version not read takes the rules of the remembered version of its sectio
   remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), later.hash, '2026-11-05T10:00:00Z');
   const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v1 })!;
   assert.deepEqual(found.rules.map((r) => r.quote), ['never `git add -A`']);
-  assert.deepEqual(found.unread.map((u) => u.readAt), ['2026-11-05T10:00:00Z']);
-  assert.deepEqual(rulesOf(s.cacheDir)({ path: '/other/CLAUDE.md', type: 'Project', content: v1 }),
-    { rules: [], unread: [{ section: sections(v1)[0], identity: JSON.stringify(['/other/CLAUDE.md', [], '## git']), readAt: null }] });
+  assert.deepEqual(found.versions.map((u) => u.readAt), ['2026-11-05T10:00:00Z']);
+  assert.deepEqual(rulesOf(s.cacheDir)({ path: '/other/CLAUDE.md', type: 'Project', content: v1 }), { rules: [],
+    versions: [{ section: sections(v1)[0], identity: JSON.stringify(['/other/CLAUDE.md', [], '## git']), read: false, readAt: null }] });
 });
 
 test('the remembered version of a section only moves forward in time', () => {
@@ -183,4 +185,25 @@ test('the remembered version of a section only moves forward in time', () => {
   const [third] = sections(`${v2}\n- never force-push again`);
   assert.deepEqual(rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: third.text })!.rules.map((r) => r.quote),
     ['never force-push']);
+});
+
+test('what the cache remembers belongs to one prompt and model: readings from another are not stood for', () => {
+  const s = sandbox();
+  const id = JSON.stringify(['/r/CLAUDE.md', [], '## git']);
+  const [later] = sections(v2);
+  // A reading made with another prompt: its rules are under its own hash, and its memory under its own name.
+  save(s.cacheDir, 'old-prompt-hash', [rule('never `git add -A`')]);
+  mkdirSync(join(s.cacheDir, 'heeded', 'latest'), { recursive: true });
+  const name = createHash('sha256').update(id).digest('hex');
+  writeFileSync(join(s.cacheDir, 'heeded', 'latest', `${name}.json`), JSON.stringify({ hash: 'old-prompt-hash', at: '2026-11-09T00:00:00Z' }));
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: later.text })!;
+  assert.deepEqual([found.rules, found.versions.map((u) => u.readAt)], [[], [null]]);
+  remember(s.cacheDir, id, later.hash, '');
+  assert.deepEqual(rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v1 })!.versions.map((u) => u.readAt), ['']);
+});
+
+test('two sections with the same heading in one file are two sections', () => {
+  const md = '# notes\n\n## todo\n\n- a\n\n# more\n\n## todo\n\n- b\n\n# notes\n\n## todo\n\n- c';
+  const ids = rulesOf(sandbox().cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: md })!.versions.map((v) => v.identity);
+  assert.equal(new Set(ids).size, ids.length);
 });

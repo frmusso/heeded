@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { counter } from './check.ts';
 import { read } from './claude-code.ts';
 import { json, type Report, rules, text } from './report.ts';
-import { estimate, extract, type Pending, rulesOf } from './rules.ts';
+import { estimate, extract, type Pending, remember, rulesOf } from './rules.ts';
 
 const HELP = `heeded — did your coding agent follow its instructions?
 
@@ -40,6 +40,7 @@ interface IO {
 async function scan(configDir: string, folder: string, cacheDir: string): Promise<{ report: Report; pending: Pending[] }> {
   const count = counter(rulesOf(cacheDir));
   const { unrecognized } = await read(configDir, folder, count.on);
+  for (const v of count.readVersions()) remember(cacheDir, v.identity, v.section.hash, v.at);
   return { report: { folder, configDir, unrecognized, ...count.result() }, pending: count.pending() };
 }
 
@@ -88,8 +89,9 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
   // Reading new sections spends the user's quota: only when asked on a terminal, after the estimate.
   if (pending.length && io.terminal) {
     // Every call costs ~4k tokens: the estimate is never under a thousand.
-    const k = Math.round(estimate(pending.map((p) => p.section)).tokens / 1000);
-    io.err(`${plural(pending.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
+    const distinct = [...new Map(pending.map((p) => [p.section.hash, p.section])).values()];
+    const k = Math.round(estimate(distinct).tokens / 1000);
+    io.err(`${plural(distinct.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
     // ctrl-c or ctrl-d at the question is a no.
     const answer = await io.ask('read them now? [y/N] ').catch(() => '');
     if (/^y(es)?$/i.test(answer.trim())) {

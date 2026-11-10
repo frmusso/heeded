@@ -42,7 +42,7 @@ test("claude code's commit form: the message is carried, whatever quotes it hold
   const [commit, ...rest] = commands(`git commit -m "$(cat <<'EOF'\nfix: the "kill billingd" case\nEOF\n)" && git push`);
   assert.equal(commit.does, 'git commit -m ""');
   assert.match(commit.carries, /fix: the "kill billingd" case/);
-  assert.deepEqual(rest.map((c) => c.does), ['git push']);
+  assert.deepEqual(rest.map((c) => c.does), ['cat <<EOF', 'git push']);
 });
 
 test('a << without its closing line is not a heredoc', () => {
@@ -57,4 +57,38 @@ test('a shell run on a string reads the string as commands too: sh -c, bash -c, 
   assert.deepEqual(does("bash <<'EOF'\npkill billingd\nEOF"), ['bash <<EOF', 'pkill billingd']);
   assert.deepEqual(does('ssh -i k host <<EOF\ngit push -f\nEOF'), ['ssh -i k host <<EOF', 'git push -f']);
   assert.deepEqual(does('bash script.sh "pkill x"; bash -x run.sh'), ['bash script.sh ""', 'bash -x run.sh']);
+});
+
+test('a line continued with a backslash is one command', () => {
+  assert.deepEqual(does('rm \\\n  -rf build && docker run \\\n  --rm x'), ['rm   -rf build', 'docker run   --rm x']);
+});
+
+test('a command substitution is read as commands, in quotes or not, with its own quotes inside', () => {
+  assert.deepEqual(does('OUT="$(git push --force 2>&1)"'), ['OUT=""', 'git push --force 2>&1']);
+  assert.deepEqual(does('x="`git push -f`"'), ['x=""', 'git push -f']);
+  assert.deepEqual(does('cd "$(dirname "$0")" && ls'), ['cd ""', 'dirname ""', 'ls']);
+  assert.deepEqual(does('x=$(cd a; ls) && git push -f'), ['x=$(cd a; ls)', 'cd a', 'ls', 'git push -f']);
+  assert.deepEqual(does('git commit -m "$(printf "feat: x; rm -rf /tmp/y")"'), ['git commit -m ""', 'printf ""']);
+});
+
+test('what a commit carries is its message, in either form', () => {
+  assert.equal(commands(`git commit -m "$(cat <<'EOF'\nfeat: add x\nEOF\n)"`)[0].carries, 'feat: add x');
+  assert.equal(commands('git commit -m "$(printf "feat: add x")"')[0].carries, 'feat: add x');
+  assert.equal(commands('git commit -m "feat: add x"')[0].carries, 'feat: add x');
+});
+
+test('a shell given a string is found wherever it sits in the command', () => {
+  for (const line of ['/bin/bash -c "git push -f"', '/usr/bin/env bash -c "git push -f"', 'docker exec app sh -c "git push -f"',
+    'timeout 60 bash -c "git push -f"', 'sudo -u www bash -c "git push -f"', 'bash -o pipefail -c "git push -f"',
+    'xargs -I{} sh -c "git push -f"']) {
+    assert.ok(does(line).includes('git push -f'), line);
+  }
+  assert.deepEqual(does('bash script.sh "git push -f" --check'), ['bash script.sh "" --check']);
+});
+
+test('shell syntax before a command is not part of what it does', () => {
+  assert.deepEqual(does('(git push --force)'), ['git push --force)']);
+  assert.deepEqual(does('if git push -f; then echo ok; fi'), ['git push -f', 'echo ok', 'fi']);
+  assert.deepEqual(does('{ git push -f; }; ! git push -f'), ['git push -f', '}', 'git push -f']);
+  assert.deepEqual(does('for x in a; do npm i; done'), ['for x in a', 'npm i', 'done']);
 });

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { main } from '../src/cli.ts';
-import { remember, save, sections } from '../src/rules.ts';
+import { remember, rulesOf, save, sections } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
 import { assistant, instructions, writeSession } from './support/transcript.ts';
@@ -201,4 +201,25 @@ test('an edited section is asked about again; until it is read, its rules from b
   assert.equal(after.notRead, 0);
   assert.deepEqual(after.rules.map((r: { name: string; broken: number }) => [r.name, r.broken]).sort(),
     [['never force-push', 1], ['never git add -A', 2]]);
+});
+
+test("a worktree's copy of a file is one section to read, not two", async () => {
+  const { s, repo, calls, heeded } = setup({ session: false });
+  const worktree = join(repo, '.claude', 'worktrees', 'w');
+  for (const [folder, id] of [[repo, 'a'], [worktree, 'b']]) {
+    writeSession(s.configDir, folder, id, [instructions([{ path: join(folder, 'CLAUDE.md'), type: 'Project', content }]),
+      assistant({ id: `m${id}`, tool: { id: `t${id}`, name: 'Bash', input: { command: 'git add -A' } } })]);
+  }
+  const { err } = await heeded([], { terminal: true });
+  assert.match(err, /^1 rule section not read yet/);
+  assert.equal(calls(), 1);
+});
+
+test('a version read, seen again later, moves what the cache remembers forward', async () => {
+  const { s, repo, heeded } = setup({ cached: true });
+  const id = JSON.stringify([join(repo, 'CLAUDE.md'), [], '']);
+  remember(s.cacheDir, id, sections(content)[0].hash, '');
+  await heeded([]);
+  const older = rulesOf(s.cacheDir)({ path: join(repo, 'CLAUDE.md'), type: 'Project', content: `${content} at all` })!;
+  assert.match(older.versions[0].readAt!, /^2026-/);
 });

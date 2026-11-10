@@ -123,15 +123,22 @@ export function save(cacheDir: string, hash: string, rules: unknown[]) {
 
 /** A section waiting to be read: when its file was last in effect during a call or a reply (`''` when never). */
 export interface Pending { section: Section; identity: string; at: string }
-/** A section never read itself, and when the read version of its section that stands for it was seen (null: none). */
-export interface Unread { section: Section; identity: string; readAt: string | null }
+/** One version of a section: whether it was read itself, and when the version of it remembered as read last was in
+ * effect (null: none was read). */
+export interface Version { section: Section; identity: string; read: boolean; readAt: string | null }
 
-/** The same section across versions of its file: the file, the headings above it, its own heading. */
-const identity = (path: string, s: Section) =>
-  JSON.stringify([path, s.path, /^#{1,6}[ \t]/.test(s.text) ? s.text.split('\n')[0] : '']);
+/** The same section across versions of its file: the file, the headings above it, its own heading, and which one of
+ * that name it is when a file repeats a heading. */
+function identity(path: string, s: Section, seen: Map<string, number>): string {
+  const key = JSON.stringify([s.path, /^#{1,6}[ \t]/.test(s.text) ? s.text.split('\n')[0] : '']);
+  const n = seen.get(key) ?? 0;
+  seen.set(key, n + 1);
+  return JSON.stringify([path, ...JSON.parse(key), ...(n ? [n] : [])]);
+}
 
 const latest = (cacheDir: string) => join(cacheDir, 'heeded', 'latest');
-const idHash = (id: string) => createHash('sha256').update(id).digest('hex');
+// Under the prompt's version and the model, like each section's hash: a new prompt reads every section again.
+const idHash = (id: string) => createHash('sha256').update(JSON.stringify([PROMPT_VERSION, MODEL, id])).digest('hex');
 
 /** The version of a section read last, by the time it was in effect: the one older versions take their rules from. */
 function recall(cacheDir: string, id: string): { hash: string; at: string } | null {
@@ -156,23 +163,22 @@ export function remember(cacheDir: string, id: string, hash: string, at: string)
  * only where its words are written. Null for a file not measured: `AutoMem` is Claude Code's memory index, one-line
  * pointers edited constantly.
  */
-export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; unread: Unread[] } | null {
-  const seen = new Map<string, Map<string, { rules: Rule[]; unread: Unread[] }>>();
+export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; versions: Version[] } | null {
+  const seen = new Map<string, Map<string, { rules: Rule[]; versions: Version[] }>>();
   return (file) => {
     if (file.type === 'AutoMem') return null;
     let byContent = seen.get(file.path);
     if (!byContent) seen.set(file.path, (byContent = new Map()));
     let found = byContent.get(file.content);
     if (!found) {
-      found = { rules: [], unread: [] };
+      found = { rules: [], versions: [] };
+      const names = new Map<string, number>();
       for (const section of sections(file.content)) {
+        const id = identity(file.path, section, names);
+        const known = recall(cacheDir, id);
         let raw = load(cacheDir, section.hash);
-        if (raw === null) {
-          const id = identity(file.path, section);
-          const known = recall(cacheDir, id);
-          found.unread.push({ section, identity: id, readAt: known?.at ?? null });
-          raw = known && load(cacheDir, known.hash);
-        }
+        found.versions.push({ section, identity: id, read: raw !== null, readAt: known?.at ?? null });
+        if (raw === null && known) raw = load(cacheDir, known.hash);
         for (const r of raw ?? []) {
           const rule = verify(r, section);
           if (rule) found.rules.push(rule);
@@ -273,8 +279,11 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
 - field: the input field matched; left out to match on the tool name alone.
 - A "command" is read the way a shell reads it, one simple command at a time (split on &&, ||, ;, |, & and line
   breaks). "value" sees what a simple command does: its words, with quoted text emptied ('' and "" stay) and heredoc
-  bodies left out. "data" sees what it carries: its quoted text and heredoc bodies, such as a commit message. What
-  sh -c, bash -c, ssh or eval are given to run is read as commands too. Any other field is matched whole by "value".
+  bodies left out; it may start with assignments (CI=1), sudo, env, time or nohup, so match the program with \b, not
+  ^. "data" sees what it carries: its heredoc bodies, then its quoted texts, one per line, such as a commit message;
+  it is empty when there are none, and ^ and $ anchor the whole of it. A rule on a message's form needs a "data" in
+  "when" too, like \S, so a command without a message is not counted. What sh -c, bash -c, ssh, eval and $( … ) run
+  is read as commands too. Any other field is matched whole by "value".
 - when: the calls the rule is about: "tool", a regex over the tool name (anchored, like ^Bash$), and "value" and "data",
   regexes as above; any may be left out.
 - broken: what makes such a call break the rule: a "tool", "value" or "data" regex, at least one. For a command, when
@@ -328,8 +337,11 @@ export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheD
   const errors: string[] = [];
   let read = 0;
   let tokens = 0;
-  for (const batch of batches(pending, (p) => p.section.text)) {
-    const body = batch.map(({ section: s }, i) =>
+  // A text under several paths (a worktree's copy of a file) is sent once, and remembered for each.
+  const byHash = new Map<string, Pending[]>();
+  for (const p of pending) byHash.set(p.section.hash, [...(byHash.get(p.section.hash) ?? []), p]);
+  for (const batch of batches([...byHash.values()], (group) => group[0].section.text)) {
+    const body = batch.map(([{ section: s }], i) =>
       `<section id="${i + 1}" path="${redact(s.path.join(' › ')).replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
     const run = await claude(`${PROMPT}\n${body.join('\n\n')}\n`, env);
     if (!run) {
@@ -358,9 +370,9 @@ export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheD
       errors.push("claude's answer didn't match the schema");
       continue;
     }
-    batch.forEach((p, i) => {
-      save(cacheDir, p.section.hash, byId.get(String(i + 1)));
-      remember(cacheDir, p.identity, p.section.hash, p.at);
+    batch.forEach((group, i) => {
+      save(cacheDir, group[0].section.hash, byId.get(String(i + 1)));
+      for (const p of group) remember(cacheDir, p.identity, p.section.hash, p.at);
     });
     read += batch.length;
   }

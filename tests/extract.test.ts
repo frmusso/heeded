@@ -125,5 +125,20 @@ test('a section read is remembered with when it was in effect: its other version
   await extract([{ section: read, identity: JSON.stringify(['/r/CLAUDE.md', [], '## git']), at: '2026-11-05T10:00:00Z' }], env, s.cacheDir);
   const older = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: `${later}, ever` })!;
   assert.deepEqual(older.rules.map((r) => r.quote), ['never force-push']);
-  assert.deepEqual(older.unread.map((u) => u.readAt), ['2026-11-05T10:00:00Z']);
+  assert.deepEqual(older.versions.map((u) => u.readAt), ['2026-11-05T10:00:00Z']);
+});
+
+test('the same text under two paths is sent once, and remembered for both', async () => {
+  const text = '## git\n\n- never force-push';
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [{ quote: 'never force-push', name: 'n', kind: 'judgment', trigger: 't' }] }]) }]);
+  const [read] = sections(text);
+  const id = (path: string) => JSON.stringify([path, [], '## git']);
+  const result = await extract([{ section: read, identity: id('/r/CLAUDE.md'), at: '2026-11-05T10:00:00Z' },
+    { section: read, identity: id('/r/w/CLAUDE.md'), at: '2026-11-04T10:00:00Z' }], env, s.cacheDir);
+  assert.equal(result.read, 1);
+  assert.equal(calls()[0].stdin.match(/<section id=/g)!.length, 1);
+  for (const path of ['/r/CLAUDE.md', '/r/w/CLAUDE.md']) {
+    const older = rulesOf(s.cacheDir)({ path, type: 'Project', content: `${text}, ever` })!;
+    assert.deepEqual(older.rules.map((r) => r.quote), ['never force-push'], path);
+  }
 });

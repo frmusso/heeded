@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
-import { type Rule, sections, type Unread, verify } from '../src/rules.ts';
+import { type Rule, sections, type Version, verify } from '../src/rules.ts';
 
 function compiled(check: Check) {
   const c = compile(check);
@@ -175,8 +175,8 @@ const EN = 'I checked the failing test and the problem is in the parser. It read
   + 'on large inputs. I will change it to stream the lines and run the tests again.';
 
 /** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */
-function count(events: Event[], rulesBy: Record<string, Rule[]>, unreadBy: Record<string, Unread[]> = {}): Data {
-  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], unread: unreadBy[f.content] ?? [] }));
+function count(events: Event[], rulesBy: Record<string, Rule[]>, versionsBy: Record<string, Version[]> = {}): Data {
+  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], versions: versionsBy[f.content] ?? [] }));
   for (const e of events) c.on(e);
   return c.result();
 }
@@ -301,7 +301,7 @@ test('the totals: sections not read yet, the files measured, sessions and subage
     bash('ls', { at: '2026-11-03T10:00:00Z' }), start('s1', 'x1'), files({ '/r/CLAUDE.local.md': 'M' }),
     reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s1', 'x2'), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' }),
     start('s3'), files({ '/r/CLAUDE.md': 'A' })],
-  { A: [addAll] }, { M: missing.map((section) => ({ section, identity: section.hash, readAt: null })) });
+  { A: [addAll] }, { M: missing.map((section) => ({ section, identity: section.hash, read: false, readAt: null })) });
   assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2,
     files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md', '/r/sub/CLAUDE.md'], sessions: 2, subagents: 1,
     from: '2026-11-01T09:00:00Z', to: '2026-11-05T08:00:00Z' });
@@ -327,11 +327,12 @@ test('a quoted block is not the reply: an Italian reply quoting a long English p
   assert.equal(language(reply), 'it');
 });
 
-// Which sections to ask about: per section, the version in effect latest, unless a later one was read already.
-const unread = (text: string, identity: string, readAt: string | null = null): Unread =>
-  ({ section: { path: [], text, hash: text }, identity, readAt });
-function asked(events: Event[], unreadBy: Record<string, Unread[]>) {
-  const c = counter((f) => ({ rules: [], unread: unreadBy[f.content] ?? [] }));
+// Which sections to ask about: per section, the version in effect latest, unless it was read or a later one was.
+const version = (text: string, identity: string, readAt: string | null = null, read = false): Version =>
+  ({ section: { path: [], text, hash: text }, identity, read, readAt });
+const unread = version;
+function asked(events: Event[], versionsBy: Record<string, Version[]>) {
+  const c = counter((f) => ({ rules: [], versions: versionsBy[f.content] ?? [] }));
   for (const e of events) c.on(e);
   return { pending: c.pending().map((p) => [p.section.text, p.at]), notRead: c.result().notRead };
 }
@@ -349,4 +350,29 @@ test('nothing is asked when a version read was in effect as late; a version neve
   assert.deepEqual(asked([start(), files({ '/r/CLAUDE.md': 'A1' })], { A1: [unread('v1', 'id')] }),
     { pending: [['v1', '']], notRead: 1 });
   assert.deepEqual(asked([start(), files({ '/r/CLAUDE.md': 'A1' })], { A1: [unread('v1', 'id', '')] }), { pending: [], notRead: 0 });
+});
+
+test('a rule on the start of a commit message holds in both commit forms', () => {
+  const conventional = compiled({ field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+commit\\b', data: '\\S' },
+    broken: { data: '^(?!(feat|fix|perf|chore|test|docs)(\\([^)]*\\))?: )' } });
+  const bash = (command: string) => verdict(conventional, 'Bash', { command });
+  assert.equal(bash('git commit -m "feat: add x"'), 'kept');
+  assert.equal(bash(`git commit -m "$(cat <<'EOF'\nfeat: add x\n\nwhy it matters\nEOF\n)"`), 'kept');
+  assert.equal(bash('git commit -m "update stuff"'), 'broken');
+  assert.equal(bash(`git commit -m "$(cat <<'EOF'\nupdate stuff\nEOF\n)"`), 'broken');
+  assert.equal(bash('git commit --amend --no-edit'), 'none');
+});
+
+test('a version read and in effect later than one not read: nothing is asked (a branch switched back)', () => {
+  assert.deepEqual(asked([start('s1'), files({ '/r/CLAUDE.md': 'A' }), bash('ls', { at: '2026-11-01T10:00:00Z' }),
+    start('s2'), files({ '/r/CLAUDE.md': 'B' }), bash('ls', { at: '2026-11-02T10:00:00Z' }),
+    start('s3'), files({ '/r/CLAUDE.md': 'A' }), bash('ls', { at: '2026-11-03T10:00:00Z' })],
+  { A: [version('va', 'id', '2026-11-01T10:00:00Z', true)], B: [unread('vb', 'id', '2026-11-01T10:00:00Z')] }), { pending: [], notRead: 0 });
+});
+
+test('the same text under two paths is one section to read', () => {
+  const c = counter((f) => ({ rules: [], versions: [version('same', f.path)] }));
+  for (const e of [start(), files({ '/r/CLAUDE.md': 'A', '/r/.claude/worktrees/w/CLAUDE.md': 'A' }), bash('ls')]) c.on(e);
+  assert.equal(c.pending().length, 2);
+  assert.equal(c.result().notRead, 1);
 });
