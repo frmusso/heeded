@@ -207,6 +207,13 @@ test("one isolated claude -p call per batch: the judge's model and schema, the p
   assert.ok(!call.stdin.includes(s.root));
 });
 
+test("a rule comes from its file, then its headings: a scoped rule is told by where it is written", async () => {
+  const { s, env, calls } = claude([{ stdout: answer([]) }]);
+  const scoped = { ...judged('typecheck with -p tsconfig.app.json', 'CLAUDE.md › TypeScript'), file: join(s.env.HOME, 'repos/app/web/CLAUDE.md') };
+  await judge([kase(scoped, 'you: check the api types\ncall Bash: cd /repo/api && npx tsc --noEmit')], env, s.cacheDir);
+  assert.ok(calls()[0].stdin.includes('<rule id="1" from="~/repos/app/web/CLAUDE.md › CLAUDE.md › TypeScript">'), calls()[0].stdin);
+});
+
 test('cases go in batches of at most 40,000 characters; tokens are summed over the calls', async () => {
   const { s, env, calls } = claude([{ stdout: answer([], [4000, 100, 0, 200]) }, { stdout: answer([], [4000, 0, 50, 300]) }]);
   const big = () => kase(commit, `you: x\ncall Bash: ${'y'.repeat(15_000)}`);

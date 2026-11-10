@@ -186,11 +186,12 @@ test("a file's rules: its cached sections give rules, the others are unread; mem
   save(s.cacheDir, section.hash, [gitAdd, { ...gitAdd, quote: 'not in the section' }]);
   const of = rulesOf(s.cacheDir);
   const a = of({ path: '/a/CLAUDE.md', type: 'Project', content });
-  assert.deepEqual(a, { rules: [verify(gitAdd, section)], versions: [
+  // Each rule knows the file it was read from: a scoped rule is told by where it is written.
+  assert.deepEqual(a, { rules: [{ ...verify(gitAdd, section), file: '/a/CLAUDE.md' }], versions: [
     { section, identity: JSON.stringify(['/a/CLAUDE.md', [], '## git']), read: true, readAt: null },
     { section: other, identity: JSON.stringify(['/a/CLAUDE.md', [], '## other']), read: false, readAt: null }] });
   assert.equal(of({ path: '/a/CLAUDE.md', type: 'Project', content }), a);
-  assert.deepEqual(of({ path: '/b/CLAUDE.md', type: 'Project', content })!.rules, a!.rules);
+  assert.deepEqual(of({ path: '/b/CLAUDE.md', type: 'Project', content })!.rules, [{ ...a!.rules[0], file: '/b/CLAUDE.md' }]);
   assert.equal(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), null);
 });
 

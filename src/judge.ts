@@ -236,6 +236,8 @@ does. For "broken" and "kept", quote: words copied exactly from the excerpt that
 const BATCH = 40_000;
 const size = (c: Case) => c.excerpt.length + c.rule.quote.length + (c.rule.context?.length ?? 0);
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+/** A path with the home folder written `~`. */
+const home = (path: string, dir: string | undefined) => (dir && path.startsWith(`${dir}/`) ? `~${path.slice(dir.length)}` : path);
 
 /** The tokens a run may spend judging, the sections it reads aside. */
 export const BUDGET = 150_000;
@@ -287,7 +289,8 @@ export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: str
       if (rules.has(c.rule.id)) continue;
       rules.set(c.rule.id, rules.size + 1);
       const context = c.rule.context ? `<context>${redact(c.rule.context)}</context>\n` : '';
-      blocks.push(`<rule id="${rules.size}" from="${redact(c.rule.heading).replaceAll('"', "'")}">\n${redact(c.rule.quote)}\n${context}</rule>`);
+      const from = [c.rule.file && home(c.rule.file, env.HOME), c.rule.heading].filter(Boolean).join(' › ');
+      blocks.push(`<rule id="${rules.size}" from="${redact(from).replaceAll('"', "'")}">\n${redact(c.rule.quote)}\n${context}</rule>`);
     }
     batch.forEach((c, i) => blocks.push(`<case id="${i + 1}" rule="${rules.get(c.rule.id)}">\n${c.excerpt}\n</case>`));
     const run = await ask(model, JUDGE_SCHEMA, `${JUDGE_PROMPT}\n${blocks.join('\n\n')}\n`, env);

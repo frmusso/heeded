@@ -61,6 +61,8 @@ export interface Rule {
   heading: string;
   /** The words around it in its section, secrets redacted, on one line: a rule's quote alone can read wrong. */
   context?: string;
+  /** The instruction file it was read from: a rule meant for one folder is told by where it is written. */
+  file?: string;
   kind: 'tool' | 'language' | 'judgment';
   trigger: string;
   check?: Check & { language?: string };
@@ -215,7 +217,7 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
         if (raw === null && known) raw = load(cacheDir, known.hash);
         for (const r of raw ?? []) {
           const rule = verify(r, section);
-          if (rule) found.rules.push(rule);
+          if (rule) found.rules.push({ ...rule, file: file.path });
         }
       }
       byContent.set(file.content, found);
