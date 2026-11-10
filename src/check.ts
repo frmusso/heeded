@@ -365,19 +365,20 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
       let quote: string | undefined;
       let own: string | undefined; // a judgment case's own line in its excerpt
       if (forJudge) {
-        const { text, key } = excerpt.of(e);
-        const id = `${t.rule.id}-${key}`;
+        const x = excerpt.of(e); // its text is built only when read
+        const id = `${t.rule.id}-${x.key}`;
         const judged = verdictOf(id);
         if (!judged) {
           t.unjudged++;
-          wait(t.waiting, { id, rule: t.rule, excerpt: text, at: e.at });
+          // Read only by the cases still waiting at the end.
+          wait(t.waiting, { id, rule: t.rule, at: e.at, get excerpt() { return x.text; } });
           continue;
         }
         t.judged++;
         if (judged.verdict === 'none') continue;
         v = judged.verdict;
         quote = judged.quote;
-        if (t.rule.kind === 'judgment') own = text.slice(text.lastIndexOf('\n') + 1);
+        if (t.rule.kind === 'judgment' && v === 'broken') own = x.text.slice(x.text.lastIndexOf('\n') + 1);
       }
       add(t.all, v === 'broken');
       if (e.compactions > 0) add(t.after, v === 'broken');

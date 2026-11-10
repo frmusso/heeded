@@ -57,23 +57,34 @@ export function saveVerdict(cacheDir: string, id: string, v: Verdict) {
 }
 
 /** The characters secrets are made of. */
-const TOKEN = /[\w+/=.-]/;
+const TOKEN = new Set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/=.-');
 
-/** Text on one line, secrets redacted, cut at `limit` characters with `…` last. Only its head is redacted, for speed; a
- * word the head cuts in two is left out, since a secret cut short may escape the patterns that find it. */
-function cut(text: string, limit: number): string {
+/** The start of a text a line shows: only that much is redacted, for speed. A word the cut splits is left out, since a
+ * secret cut short may escape the patterns that find it. */
+function head(text: string, limit: number): string {
   let end = Math.min(text.length, limit + 200);
-  if (end < text.length && TOKEN.test(text[end])) while (end > 0 && TOKEN.test(text[end - 1])) end--;
-  const line = redact(text.slice(0, end)).replace(/[\p{Cc}\s]+/gu, ' ').trim();
+  if (end < text.length && TOKEN.has(text[end])) while (end > 0 && TOKEN.has(text[end - 1])) end--;
+  return text.slice(0, end);
+}
+
+/** A head on one line, secrets redacted, cut at `limit` characters with `…` last: never longer than the head. */
+function render(head: string, limit: number): string {
+  const line = redact(head).replace(/[\p{Cc}\s]+/gu, ' ').trim();
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
 }
 
-/** A call shows its command, else its file, else its whole input. */
-function line(e: Seen, limit: number): string {
-  if (e.kind === 'reply') return `reply: ${cut(e.text, limit)}`;
+const cut = (text: string, limit: number) => render(head(text, limit), limit);
+
+/** A line's prefix and what it shows: a call its command, else its file, else its whole input. */
+function parts(e: Seen): [string, string] {
+  if (e.kind === 'reply') return ['reply: ', e.text];
   const { command, file_path } = e.input;
-  const detail = typeof command === 'string' ? command : typeof file_path === 'string' ? file_path : JSON.stringify(e.input);
-  return `call ${e.tool}: ${cut(detail, limit)}`;
+  return [`call ${e.tool}: `, typeof command === 'string' ? command : typeof file_path === 'string' ? file_path : JSON.stringify(e.input)];
+}
+
+function line(e: Seen, limit: number): string {
+  const [prefix, text] = parts(e);
+  return prefix + cut(text, limit);
 }
 
 /** Whose words a prompt holds: `you` for the user's, `task` for what another agent asked. */
@@ -92,7 +103,7 @@ export function excerpts() {
   let sizes = [0, 0]; // characters of the lines since: the others', the user's words'
   let dropped = false;
   // Every rule in effect asks about the same event in turn.
-  let memo: { e: Seen; result: { text: string; key: string } } | null = null;
+  let memo: { e: Seen; result: { readonly text: string; key: string } } | null = null;
 
   const restart = (line: string | null) => {
     start = line;
@@ -121,10 +132,17 @@ export function excerpts() {
       }
     },
 
-    of(e: Seen): { text: string; key: string } {
+    /**
+     * The excerpt of a case, and its key. Every case needs its key, to find its verdict; only a case without one needs its
+     * text. So the key is made from the case's head as written, the longest its line can be, and the text only when
+     * read, with the same lines left out.
+     */
+    of(e: Seen): { readonly text: string; key: string } {
       if (memo?.e === e) return memo.result;
-      const last = line(e, WORDS);
-      let size = (start === null ? 0 : start.length + 1) + sizes[0] + sizes[1] + last.length + (dropped ? 2 : 0);
+      const [prefix, raw] = parts(e);
+      const caseHead = head(raw, WORDS);
+      let size = (start === null ? 0 : start.length + 1) + sizes[0] + sizes[1] + prefix.length + Math.min(caseHead.length, WORDS)
+        + (dropped ? 2 : 0);
       const drop = new Set<number>();
       if (size > WHOLE && !dropped) size += 2;
       for (const you of [false, true]) {
@@ -134,10 +152,15 @@ export function excerpts() {
           size -= since[i].text.length + 1;
         }
       }
-      const kept = since.filter((_, i) => !drop.has(i)).map((l) => l.text);
-      const text = [...(start === null ? [] : [start]), ...(dropped || drop.size ? ['…'] : []), ...kept, last].join('\n');
-      const key = createHash('sha256').update(JSON.stringify([JUDGE_VERSION, JUDGE_MODEL, text])).digest('hex');
-      memo = { e, result: { text, key } };
+      const lines = [...(start === null ? [] : [start]), ...(dropped || drop.size ? ['…'] : []),
+        ...since.filter((_, i) => !drop.has(i)).map((l) => l.text)];
+      const hash = createHash('sha256').update(`${JUDGE_VERSION}\0${JUDGE_MODEL}`);
+      for (const l of lines) hash.update('\n').update(l);
+      hash.update('\n').update(prefix).update(caseHead);
+      let text: string | undefined;
+      memo = { e, result: { key: hash.digest('hex'), get text() {
+        return (text ??= [...lines, prefix + render(caseHead, WORDS)].join('\n'));
+      } } };
       return memo.result;
     },
   };
