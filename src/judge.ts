@@ -182,6 +182,38 @@ const BATCH = 40_000;
 const size = (c: Case) => c.excerpt.length + c.rule.quote.length;
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
 
+/** The tokens a run may spend judging, the sections it reads aside. */
+export const BUDGET = 150_000;
+
+/** What judging `cases` would cost: each call carries ~4.4k tokens of prompt and schema, the text is read once, and each
+ * verdict is answered in ~50 tokens. The real count is shown after. */
+export function estimate(cases: Case[]): { calls: number; tokens: number } {
+  const calls = batches(cases, size, BATCH).length;
+  const chars = cases.reduce((n, c) => n + size(c), 0);
+  return { calls, tokens: 4400 * calls + Math.ceil(chars / 4) + 50 * cases.length };
+}
+
+/**
+ * The cases a run judges within `budget`, from each rule's cases waiting, latest first: tool candidates first, then
+ * judgment rules' cases; in each, one case of every rule in turn, the rule with the latest case first, so every rule
+ * gets some. It stops at the first case the budget can't take.
+ */
+export function select(tool: Case[][], judgment: Case[][], budget: number): Case[] {
+  const picked: Case[] = [];
+  for (const group of [tool, judgment]) {
+    const lists = group.filter((l) => l.length)
+      .toSorted((a, b) => (a[0].at === b[0].at ? (a[0].rule.id < b[0].rule.id ? -1 : 1) : a[0].at > b[0].at ? -1 : 1));
+    for (let i = 0; lists.some((l) => i < l.length); i++) {
+      for (const l of lists) {
+        if (i >= l.length) continue;
+        if (estimate([...picked, l[i]]).tokens > budget) return picked;
+        picked.push(l[i]);
+      }
+    }
+  }
+  return picked;
+}
+
 /**
  * Judges cases through the user's own claude, one call per batch, and caches each verdict as its batch comes: a run
  * stopped midway keeps what it paid for. Only the rules and the excerpts leave the machine, secrets redacted. A verdict

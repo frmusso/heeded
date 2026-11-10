@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Event } from '../src/claude-code.ts';
-import { type Case, excerpts, judge, saveVerdict, verdicts } from '../src/judge.ts';
+import { type Case, estimate, excerpts, judge, saveVerdict, select, verdicts } from '../src/judge.ts';
 import type { Rule } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
@@ -227,4 +227,32 @@ test('failures as in the extraction: no claude, an exit code, an error answer, a
   assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', 'claude: nope', shape, shape]);
   assert.equal(result.judged, 0);
   assert.deepEqual(list.map((k) => verdicts(s.cacheDir)(k.id)), [null, null, null, null]);
+});
+
+// What judging costs, and what a run judges within its budget.
+const twenty = judged('never commit for me!');
+
+test('the estimate: ~4.4k tokens a call, the text read once, ~50 tokens a verdict', () => {
+  assert.deepEqual(estimate([kase(twenty, 'e'.repeat(10_000))]), { calls: 1, tokens: 6955 });
+  const three = [1, 2, 3].map(() => kase(twenty, 'e'.repeat(15_000)));
+  assert.deepEqual(estimate(three), { calls: 2, tokens: 20_215 });
+});
+
+const timed = (rule: Rule, day: number): Case => ({ ...kase(rule, 'you: x\ncall Bash: y'), at: `2026-11-0${day}T10:00:00Z` });
+const t1 = judged('never git add -A');
+const t2 = judged('never force-push');
+const j1 = judged('commit only when asked');
+
+test('tool candidates first, then judgment cases; rules in turn, latest rule first', () => {
+  const [t1a, t1b, t2a, j1a, j1b] = [timed(t1, 3), timed(t1, 2), timed(t2, 4), timed(j1, 9), timed(j1, 8)];
+  assert.deepEqual(select([[t1a, t1b], [t2a]], [[j1a, j1b]], Infinity), [t2a, t1a, t1b, j1a, j1b]);
+});
+
+test('the selection stops at the budget', () => {
+  const list = [timed(t1, 3), timed(t1, 2), timed(t1, 1)];
+  assert.deepEqual(select([list], [], estimate(list.slice(0, 2)).tokens), list.slice(0, 2));
+});
+
+test('nothing waiting, nothing selected', () => {
+  assert.deepEqual(select([], [], 150_000), []);
 });
