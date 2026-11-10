@@ -9,7 +9,7 @@ import type { InstructionFile } from './claude-code.ts';
 import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
-const PROMPT_VERSION = 1;
+const PROMPT_VERSION = 2;
 const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
@@ -159,15 +159,15 @@ function batches(sections: Section[]): Section[][] {
   return out;
 }
 
-/** What reading `sections` would cost: each call carries a ~4k-token system prompt; the answer is taken as long as the
- * text read. Off by up to ~2× either way; the real count is shown after. */
+/** What reading `sections` would cost: each call carries ~4.4k tokens of prompt and schema; the text is read once and
+ * answered with about twice as much (a JSON object per rule). Fitted on real calls; the real count is shown after. */
 export function estimate(sections: Section[]): { calls: number; tokens: number } {
   const calls = batches(sections).length;
   const chars = sections.reduce((n, s) => n + s.text.length, 0);
-  return { calls, tokens: 4000 * calls + 2 * Math.ceil(chars / 4) };
+  return { calls, tokens: 4400 * calls + 3 * Math.ceil(chars / 4) };
 }
 
-const PATTERNS = { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' } } };
+const PATTERNS = { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' }, data: { type: 'string' } } };
 const EXAMPLES = {
   type: 'array',
   items: { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' } }, required: ['tool', 'value'] },
@@ -230,13 +230,20 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
 - Claude Code tools: Bash (field "command"), Edit (file_path, old_string, new_string), Write (file_path, content),
   Read (file_path); MCP tools are named mcp__<server>__<tool>.
 - field: the input field matched; left out to match on the tool name alone.
-- when: the calls the rule is about: "tool", a regex over the tool name (anchored, like ^Bash$), and "value", a regex
-  over the field; either may be left out.
-- broken: what makes such a call break the rule: a "tool" or "value" regex, at least one.
+- A "command" is read the way a shell reads it, one simple command at a time (split on &&, ||, ;, |, & and line
+  breaks). "value" sees what a simple command does: its words, with quoted text emptied ('' and "" stay) and heredoc
+  bodies left out. "data" sees what it carries: its quoted text and heredoc bodies, such as a commit message. What
+  sh -c, bash -c, ssh or eval are given to run is read as commands too. Any other field is matched whole by "value".
+- when: the calls the rule is about: "tool", a regex over the tool name (anchored, like ^Bash$), and "value" and "data",
+  regexes as above; any may be left out.
+- broken: what makes such a call break the rule: a "tool", "value" or "data" regex, at least one. For a command, when
+  and broken must match the same simple command.
 - ignoreCase: true when letter case doesn't matter.
-- The regexes are JavaScript, without flags, and never repeat a group that holds a quantifier, like (a+)+.
-- breaking: two or three example calls { "tool", "value" } that break the rule; keeping: two or three calls the rule is
-  about that keep it. A value is the field's whole value.
+- The regexes are JavaScript, without flags, and never repeat a group that holds a quantifier or an alternation, like
+  (a+)+ or (a|b)+.
+- breaking: two or three example calls { "tool", "value" } that break the rule; keeping: two or three calls that keep
+  it, at least one the rule is about, and one near miss that names the forbidden thing without doing it (a search for
+  it, an echo of it, a commit message naming it). A value is the field's whole value: for Bash, a whole command line.
 `;
 
 /** `claude -p` isolated: no tools, no session saved, no settings, hooks, MCP servers or slash commands of the user's. */

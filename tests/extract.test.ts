@@ -8,10 +8,10 @@ import { sandbox } from './support/sandbox.ts';
 
 const section = (text: string, hash = text.slice(0, 8), path: string[] = []): Section => ({ path, text, hash });
 
-test('the estimate: one call per 30,000 characters of sections, ~4k tokens each, plus the text read and written', () => {
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 25_500 });
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 19_000 });
-  assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 26_500 });
+test('the estimate: one call per 30,000 characters of sections, ~4.4k tokens each, plus the text read and the answer', () => {
+  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 35_050 });
+  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 26_900 });
+  assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 38_150 });
 });
 
 /** What `claude -p --output-format json --json-schema` prints. */
@@ -44,7 +44,8 @@ test('one isolated claude -p call per batch: the exact flags, an empty folder of
   assert.deepEqual(call.argv, ['-p', '--model', 'sonnet', '--output-format', 'json', '--json-schema', schema,
     '--no-session-persistence', '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '',
     '--settings', '{"disableAllHooks":true}']);
-  assert.equal(JSON.parse(schema).type, 'object');
+  const check = JSON.parse(schema).properties.sections.items.properties.rules.items.properties.check.properties;
+  assert.deepEqual([check.when.properties.data, check.broken.properties.data], [{ type: 'string' }, { type: 'string' }]);
   assert.deepEqual(call.cwdEntries, []);
   assert.equal(existsSync(call.cwd), false);
   assert.match(call.stdin, /<section id="1" path="rules">\n## git\n\n- never push with …\n<\/section>/);
