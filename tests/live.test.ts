@@ -17,7 +17,7 @@ test('the extraction call is isolated, and its answer verifies', { skip }, async
   process.env.TMPDIR = dir; // the call's own folder is made in here, under the canary
   try {
     const [section] = sections('## git\n\n- never run `git push --force`\n');
-    const result = await extract([section], process.env, dir);
+    const result = await extract([{ section, identity: 'live', at: '' }], process.env, dir);
     t.diagnostic(`${result.tokens} tokens`);
     assert.deepEqual(result.errors, []);
     const raw = load(dir, section.hash) ?? [];

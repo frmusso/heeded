@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { main } from '../src/cli.ts';
-import { save, sections } from '../src/rules.ts';
+import { remember, save, sections } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
 import { assistant, instructions, writeSession } from './support/transcript.ts';
@@ -176,4 +176,29 @@ test('an unexpected error: one line, exit 1, no stack trace', async () => {
   const { code, err } = await heeded([], { terminal: true, reply: 'y', env: { XDG_CACHE_HOME: notAFolder } });
   assert.equal(code, 1);
   assert.match(err, /\nheeded: [^\n]+\n$/);
+});
+
+test('an edited section is asked about again; until it is read, its rules from before still count', async () => {
+  const { s, repo, calls, heeded } = setup({ session: false });
+  const edited = `${content}\n- never force-push`;
+  const md = (text: string) => instructions([{ path: join(repo, 'CLAUDE.md'), type: 'Project', content: text }]);
+  const bash = (id: string, command: string) => assistant({ id, tool: { id: `t${id}`, name: 'Bash', input: { command } } });
+  writeSession(s.configDir, repo, 'a', [md(content), bash('1', 'git add -A')]);
+  writeSession(s.configDir, repo, 'b', [md(edited), bash('2', 'git add -A'), bash('3', 'git push --force')]);
+  save(s.cacheDir, sections(content)[0].hash, [gitAdd]);
+  remember(s.cacheDir, JSON.stringify([join(repo, 'CLAUDE.md'), [], '']), sections(content)[0].hash, '');
+  const before = JSON.parse((await heeded(['--json'])).out);
+  assert.equal(before.notRead, 1);
+  assert.deepEqual(before.rules.map((r: { name: string; broken: number }) => [r.name, r.broken]), [['never git add -A', 2]]);
+
+  const forcePush = { quote: 'never force-push', name: 'never force-push', kind: 'tool', trigger: 'pushing',
+    check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+push\\b' }, broken: { value: '\\s(--force|-f)\\b' } },
+    breaking: [{ tool: 'Bash', value: 'git push --force' }], keeping: [{ tool: 'Bash', value: 'git push' }] };
+  const both = JSON.stringify({ is_error: false, structured_output: { sections: [{ id: '1', rules: [gitAdd, forcePush] }] },
+    usage: { input_tokens: 4400, output_tokens: 300 } });
+  const after = JSON.parse((await heeded(['--json'], { terminal: true, env: { FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: both }]) } })).out);
+  assert.equal(calls(), 1);
+  assert.equal(after.notRead, 0);
+  assert.deepEqual(after.rules.map((r: { name: string; broken: number }) => [r.name, r.broken]).sort(),
+    [['never force-push', 1], ['never git add -A', 2]]);
 });

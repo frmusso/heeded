@@ -2,7 +2,7 @@
 import type { Event, InstructionFile } from './claude-code.ts';
 import { redact } from './redact.ts';
 import { commands, type Simple } from './shell.ts';
-import type { Rule, Section } from './rules.ts';
+import type { Pending, Rule, Unread } from './rules.ts';
 
 /** The most common words of each language a reply can be detected in. */
 const STOPWORDS: Record<string, string> = {
@@ -220,7 +220,7 @@ function evidence(e: Extract<Event, { kind: 'call' | 'reply' }>, c: Compiled | n
  * Counts, over a stream of events, how often each rule applied and how often it was broken. Each transcript starts with
  * no file in effect; the rules in effect are those of the files its `instructions` events recorded.
  */
-export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; missing: Section[] } | null) {
+export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; unread: Unread[] } | null) {
   const tallies = new Map<string, Tally>();
   let inEffect = new Map<string, InstructionFile>();
   let checked: Tally[] = [];
@@ -229,7 +229,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
   const seen = new Set<string>();
   let session = '';
   let agent: string | null = null;
-  const missing = new Set<string>();
+  // Sections not read yet, one per version of each section, and those of the files in effect now.
+  const candidates = new Map<string, Unread & { at: string }>();
+  let current: (Unread & { at: string })[] = [];
   const files = new Set<string>();
   let sessions = 0;
   let subagents = 0;
@@ -240,11 +242,17 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
   function refresh() {
     const ids = new Set<string>();
     checked = [];
+    current = [];
     for (const file of inEffect.values()) {
       const found = rulesOf(file);
       if (!found) continue;
       files.add(file.path);
-      for (const s of found.missing) missing.add(s.hash);
+      for (const u of found.unread) {
+        const key = `${u.identity}\0${u.section.hash}`;
+        let c = candidates.get(key);
+        if (!c) candidates.set(key, (c = { ...u, at: '' }));
+        current.push(c);
+      }
       for (const rule of found.rules) {
         let t = tallies.get(rule.id);
         if (!t) {
@@ -262,6 +270,17 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
     }
   }
 
+  /**
+   * The sections to read: of each section, the version in effect latest, unless a version of it read already was in
+   * effect as late. The others take that version's rules meanwhile.
+   */
+  function pending(): Pending[] {
+    const latest = new Map<string, Unread & { at: string }>();
+    for (const c of candidates.values()) if (!latest.has(c.identity) || c.at > latest.get(c.identity)!.at) latest.set(c.identity, c);
+    return [...latest.values()].filter((c) => c.readAt === null || c.at > c.readAt)
+      .map(({ section, identity, at }) => ({ section, identity, at }));
+  }
+
   return {
     on(e: Event) {
       if (e.kind === 'transcript') {
@@ -269,11 +288,14 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
         active = false;
         inEffect = new Map();
         checked = [];
+        current = [];
       } else if (e.kind === 'instructions') {
         if (e.replace) inEffect = new Map();
         for (const file of e.files) inEffect.set(file.path, file);
         refresh();
-      } else if ((e.kind === 'call' || e.kind === 'reply') && !seen.has(e.id)) {
+      } else if (e.kind === 'call' || e.kind === 'reply') {
+        for (const c of current) if (e.at > c.at) c.at = e.at;
+        if (seen.has(e.id)) return;
         // A session or subagent counts once it did something: a transcript with no call or reply isn't one.
         if (!active) {
           active = true;
@@ -299,6 +321,8 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
         }
       }
     },
+
+    pending,
 
     result(): Data {
       const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence }): RuleData => ({
@@ -329,7 +353,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; mis
           sum[i].broken += c.broken;
         });
       }
-      return { from, to, sessions, subagents, files: [...files], notRead: missing.size, rules, byDepth: buckets(sum) };
+      return { from, to, sessions, subagents, files: [...files], notRead: pending().length, rules, byDepth: buckets(sum) };
     },
   };
 }

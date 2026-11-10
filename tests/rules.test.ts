@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { load, rulesOf, save, sections, verify } from '../src/rules.ts';
+import { load, remember, rulesOf, save, sections, verify } from '../src/rules.ts';
 import { sandbox } from './support/sandbox.ts';
 
 const shape = (content: string) => sections(content).map(({ path, text }) => ({ path, text }));
@@ -125,15 +125,17 @@ test('the cache: what is saved loads back; a missing or corrupt file loads as no
   assert.equal(load(s.cacheDir, 'obj'), null);
 });
 
-test("a file's rules: its cached sections give rules, the others are missing; the same content is read once", () => {
+test("a file's rules: its cached sections give rules, the others are unread; memoized by path and content", () => {
   const s = sandbox();
   const content = `${section.text}\n\n## other\n\nnothing to see`;
   const [, other] = sections(content);
   save(s.cacheDir, section.hash, [gitAdd, { ...gitAdd, quote: 'not in the section' }]);
   const of = rulesOf(s.cacheDir);
   const a = of({ path: '/a/CLAUDE.md', type: 'Project', content });
-  assert.deepEqual(a, { rules: [verify(gitAdd, section)], missing: [other] });
-  assert.equal(of({ path: '/b/CLAUDE.md', type: 'Project', content }), a);
+  assert.deepEqual(a, { rules: [verify(gitAdd, section)],
+    unread: [{ section: other, identity: JSON.stringify(['/a/CLAUDE.md', [], '## other']), readAt: null }] });
+  assert.equal(of({ path: '/a/CLAUDE.md', type: 'Project', content }), a);
+  assert.deepEqual(of({ path: '/b/CLAUDE.md', type: 'Project', content })!.rules, a!.rules);
   assert.equal(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), null);
 });
 
@@ -150,4 +152,35 @@ test('a fence closes only with its own kind of marker', () => {
 
 test('a name holds no control characters: no line breaks, no terminal escapes', () => {
   assert.equal(verify({ ...gitAdd, name: 'never\n git\x1b[31m add' }, section)!.name, 'never git [31m add');
+});
+
+// Two versions of one section: the later one adds a rule; the earlier one also had a rule the later dropped.
+const v1 = '## git\n\n- never `git add -A`: stage files\n  by name.\n- never rebase';
+const v2 = '## git\n\n- never `git add -A`: stage files\n  by name.\n- never force-push';
+const rule = (quote: string) => ({ quote, name: quote, kind: 'judgment', trigger: 'git' });
+
+test('a version not read takes the rules of the remembered version of its section, where their words are written', () => {
+  const s = sandbox();
+  const [later] = sections(v2);
+  save(s.cacheDir, later.hash, [rule('never `git add -A`'), rule('never force-push')]);
+  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), later.hash, '2026-11-05T10:00:00Z');
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v1 })!;
+  assert.deepEqual(found.rules.map((r) => r.quote), ['never `git add -A`']);
+  assert.deepEqual(found.unread.map((u) => u.readAt), ['2026-11-05T10:00:00Z']);
+  assert.deepEqual(rulesOf(s.cacheDir)({ path: '/other/CLAUDE.md', type: 'Project', content: v1 }),
+    { rules: [], unread: [{ section: sections(v1)[0], identity: JSON.stringify(['/other/CLAUDE.md', [], '## git']), readAt: null }] });
+});
+
+test('the remembered version of a section only moves forward in time', () => {
+  const s = sandbox();
+  const id = JSON.stringify(['/r/CLAUDE.md', [], '## git']);
+  const [earlier] = sections(v1);
+  const [later] = sections(v2);
+  save(s.cacheDir, earlier.hash, [rule('never rebase')]);
+  save(s.cacheDir, later.hash, [rule('never force-push')]);
+  remember(s.cacheDir, id, later.hash, '2026-11-05T10:00:00Z');
+  remember(s.cacheDir, id, earlier.hash, '2026-11-01T10:00:00Z');
+  const [third] = sections(`${v2}\n- never force-push again`);
+  assert.deepEqual(rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: third.text })!.rules.map((r) => r.quote),
+    ['never force-push']);
 });

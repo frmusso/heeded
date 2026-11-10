@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { counter } from './check.ts';
 import { read } from './claude-code.ts';
 import { json, type Report, rules, text } from './report.ts';
-import { estimate, extract, rulesOf, type Section } from './rules.ts';
+import { estimate, extract, type Pending, rulesOf } from './rules.ts';
 
 const HELP = `heeded — did your coding agent follow its instructions?
 
@@ -36,17 +36,11 @@ interface IO {
   err: (s: string) => void;
 }
 
-/** One pass over the folder's transcripts with the rules cached so far; the sections no rule was read from yet. */
-async function scan(configDir: string, folder: string, cacheDir: string): Promise<{ report: Report; missing: Section[] }> {
-  const of = rulesOf(cacheDir);
-  const missing = new Map<string, Section>();
-  const count = counter((file) => {
-    const found = of(file);
-    for (const s of found?.missing ?? []) missing.set(s.hash, s);
-    return found;
-  });
+/** One pass over the folder's transcripts with the rules cached so far; the sections to read. */
+async function scan(configDir: string, folder: string, cacheDir: string): Promise<{ report: Report; pending: Pending[] }> {
+  const count = counter(rulesOf(cacheDir));
   const { unrecognized } = await read(configDir, folder, count.on);
-  return { report: { folder, configDir, unrecognized, ...count.result() }, missing: [...missing.values()] };
+  return { report: { folder, configDir, unrecognized, ...count.result() }, pending: count.pending() };
 }
 
 const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
@@ -89,17 +83,17 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
   const home = io.env.HOME || homedir();
   const configDir = io.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
   const cacheDir = io.env.XDG_CACHE_HOME || join(home, '.cache');
-  let { report, missing } = await scan(configDir, io.cwd, cacheDir);
+  let { report, pending } = await scan(configDir, io.cwd, cacheDir);
   let code = 0;
   // Reading new sections spends the user's quota: only when asked on a terminal, after the estimate.
-  if (missing.length && io.terminal) {
+  if (pending.length && io.terminal) {
     // Every call costs ~4k tokens: the estimate is never under a thousand.
-    const k = Math.round(estimate(missing).tokens / 1000);
-    io.err(`${plural(missing.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
+    const k = Math.round(estimate(pending.map((p) => p.section)).tokens / 1000);
+    io.err(`${plural(pending.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
     // ctrl-c or ctrl-d at the question is a no.
     const answer = await io.ask('read them now? [y/N] ').catch(() => '');
     if (/^y(es)?$/i.test(answer.trim())) {
-      const found = await extract(missing, io.env, cacheDir);
+      const found = await extract(pending, io.env, cacheDir);
       if (found.read) io.err(`read ${plural(found.read, 'section')} · ${found.tokens.toLocaleString('en-US')} tokens\n`);
       for (const e of found.errors) io.err(`heeded: ${e}\n`);
       if (found.errors.length) code = 1;

@@ -110,51 +110,92 @@ export function load(cacheDir: string, hash: string): unknown[] | null {
 }
 
 /** Written whole or not at all: a temporary file, then a rename. */
-export function save(cacheDir: string, hash: string, rules: unknown[]) {
-  const dir = join(cacheDir, 'heeded');
+function write(dir: string, name: string, value: unknown) {
   mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `${hash}.${process.pid}.tmp`);
-  writeFileSync(tmp, JSON.stringify(rules));
-  renameSync(tmp, join(dir, `${hash}.json`));
+  const tmp = join(dir, `${name}.${process.pid}.tmp`);
+  writeFileSync(tmp, JSON.stringify(value));
+  renameSync(tmp, join(dir, `${name}.json`));
+}
+
+export function save(cacheDir: string, hash: string, rules: unknown[]) {
+  write(join(cacheDir, 'heeded'), hash, rules);
+}
+
+/** A section waiting to be read: when its file was last in effect during a call or a reply (`''` when never). */
+export interface Pending { section: Section; identity: string; at: string }
+/** A section never read itself, and when the read version of its section that stands for it was seen (null: none). */
+export interface Unread { section: Section; identity: string; readAt: string | null }
+
+/** The same section across versions of its file: the file, the headings above it, its own heading. */
+const identity = (path: string, s: Section) =>
+  JSON.stringify([path, s.path, /^#{1,6}[ \t]/.test(s.text) ? s.text.split('\n')[0] : '']);
+
+const latest = (cacheDir: string) => join(cacheDir, 'heeded', 'latest');
+const idHash = (id: string) => createHash('sha256').update(id).digest('hex');
+
+/** The version of a section read last, by the time it was in effect: the one older versions take their rules from. */
+function recall(cacheDir: string, id: string): { hash: string; at: string } | null {
+  try {
+    const known = JSON.parse(readFileSync(join(latest(cacheDir), `${idHash(id)}.json`), 'utf8'));
+    return typeof known?.hash === 'string' && typeof known.at === 'string' ? known : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remembers a read version of a section, unless one in effect as late or later is remembered already: the cache is
+ * shared by every folder and config dir, whose histories interleave. */
+export function remember(cacheDir: string, id: string, hash: string, at: string) {
+  const known = recall(cacheDir, id);
+  if (!known || at > known.at) write(latest(cacheDir), idHash(id), { hash, at });
 }
 
 /**
- * A file's rules from the cache, and its sections never read, memoized by content: worktrees and sessions record the
- * same files over and over. Null for a file not measured: `AutoMem` is Claude Code's memory index, one-line pointers
- * edited constantly.
+ * A file's rules from the cache, and its sections never read, memoized by path and content: worktrees and sessions
+ * record the same files over and over. A section never read takes the rules of the version of it read last, each kept
+ * only where its words are written. Null for a file not measured: `AutoMem` is Claude Code's memory index, one-line
+ * pointers edited constantly.
  */
-export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; missing: Section[] } | null {
-  const seen = new Map<string, { rules: Rule[]; missing: Section[] }>();
+export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: Rule[]; unread: Unread[] } | null {
+  const seen = new Map<string, Map<string, { rules: Rule[]; unread: Unread[] }>>();
   return (file) => {
     if (file.type === 'AutoMem') return null;
-    let found = seen.get(file.content);
+    let byContent = seen.get(file.path);
+    if (!byContent) seen.set(file.path, (byContent = new Map()));
+    let found = byContent.get(file.content);
     if (!found) {
-      found = { rules: [], missing: [] };
+      found = { rules: [], unread: [] };
       for (const section of sections(file.content)) {
-        const raw = load(cacheDir, section.hash);
-        if (raw === null) found.missing.push(section);
-        else for (const r of raw) {
+        let raw = load(cacheDir, section.hash);
+        if (raw === null) {
+          const id = identity(file.path, section);
+          const known = recall(cacheDir, id);
+          found.unread.push({ section, identity: id, readAt: known?.at ?? null });
+          raw = known && load(cacheDir, known.hash);
+        }
+        for (const r of raw ?? []) {
           const rule = verify(r, section);
           if (rule) found.rules.push(rule);
         }
       }
-      seen.set(file.content, found);
+      byContent.set(file.content, found);
     }
     return found;
   };
 }
 
-/** Sections grouped into calls of at most 30,000 characters of text; a bigger section goes alone. */
-function batches(sections: Section[]): Section[][] {
-  const out: Section[][] = [];
+/** Items grouped into calls of at most 30,000 characters of section text; a bigger section goes alone. */
+function batches<T>(items: T[], text: (item: T) => string): T[][] {
+  const out: T[][] = [];
   let size = Infinity;
-  for (const section of sections) {
-    if (size + section.text.length > 30_000) {
+  for (const item of items) {
+    const length = text(item).length;
+    if (size + length > 30_000) {
       out.push([]);
       size = 0;
     }
-    out[out.length - 1].push(section);
-    size += section.text.length;
+    out[out.length - 1].push(item);
+    size += length;
   }
   return out;
 }
@@ -162,7 +203,7 @@ function batches(sections: Section[]): Section[][] {
 /** What reading `sections` would cost: each call carries ~4.4k tokens of prompt and schema; the text is read once and
  * answered with about twice as much (a JSON object per rule). Fitted on real calls; the real count is shown after. */
 export function estimate(sections: Section[]): { calls: number; tokens: number } {
-  const calls = batches(sections).length;
+  const calls = batches(sections, (s) => s.text).length;
   const chars = sections.reduce((n, s) => n + s.text.length, 0);
   return { calls, tokens: 4400 * calls + 3 * Math.ceil(chars / 4) };
 }
@@ -277,17 +318,18 @@ async function claude(prompt: string, env: NodeJS.ProcessEnv):
 const firstLine = (text: string) => text.split('\n').find((l) => l.trim())?.trim() ?? '';
 
 /**
- * Reads the rules of `sections` through the user's own claude, sonnet, one call per batch, and caches each batch as it
- * comes: an interrupted run keeps what it paid for. Only the sections' text leaves the machine, secrets redacted; never
+ * Reads the rules of the pending sections through the user's own claude, sonnet, one call per batch, and caches each
+ * batch as it comes, each section remembered as its section's latest read version: an interrupted run keeps what it
+ * paid for. Only the sections' text leaves the machine, secrets redacted; never
  * a file's path. A batch that fails is reported and nothing of it is cached.
  */
-export async function extract(sections: Section[], env: NodeJS.ProcessEnv, cacheDir: string):
+export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheDir: string):
   Promise<{ read: number; tokens: number; errors: string[] }> {
   const errors: string[] = [];
   let read = 0;
   let tokens = 0;
-  for (const batch of batches(sections)) {
-    const body = batch.map((s, i) =>
+  for (const batch of batches(pending, (p) => p.section.text)) {
+    const body = batch.map(({ section: s }, i) =>
       `<section id="${i + 1}" path="${redact(s.path.join(' › ')).replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
     const run = await claude(`${PROMPT}\n${body.join('\n\n')}\n`, env);
     if (!run) {
@@ -316,7 +358,10 @@ export async function extract(sections: Section[], env: NodeJS.ProcessEnv, cache
       errors.push("claude's answer didn't match the schema");
       continue;
     }
-    batch.forEach((s, i) => save(cacheDir, s.hash, byId.get(String(i + 1))));
+    batch.forEach((p, i) => {
+      save(cacheDir, p.section.hash, byId.get(String(i + 1)));
+      remember(cacheDir, p.identity, p.section.hash, p.at);
+    });
     read += batch.length;
   }
   return { read, tokens, errors };

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
-import { type Rule, type Section, sections, verify } from '../src/rules.ts';
+import { type Rule, type Section, sections, type Unread, verify } from '../src/rules.ts';
 
 function compiled(check: Check) {
   const c = compile(check);
@@ -175,8 +175,8 @@ const EN = 'I checked the failing test and the problem is in the parser. It read
   + 'on large inputs. I will change it to stream the lines and run the tests again.';
 
 /** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */
-function count(events: Event[], rulesBy: Record<string, Rule[]>, missingBy: Record<string, Section[]> = {}): Data {
-  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], missing: missingBy[f.content] ?? [] }));
+function count(events: Event[], rulesBy: Record<string, Rule[]>, unreadBy: Record<string, Unread[]> = {}): Data {
+  const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], unread: unreadBy[f.content] ?? [] }));
   for (const e of events) c.on(e);
   return c.result();
 }
@@ -301,7 +301,7 @@ test('the totals: sections not read yet, the files measured, sessions and subage
     bash('ls', { at: '2026-11-03T10:00:00Z' }), start('s1', 'x1'), files({ '/r/CLAUDE.local.md': 'M' }),
     reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s1', 'x2'), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' }),
     start('s3'), files({ '/r/CLAUDE.md': 'A' })],
-  { A: [addAll] }, { M: missing });
+  { A: [addAll] }, { M: missing.map((section) => ({ section, identity: section.hash, readAt: null })) });
   assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2,
     files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md', '/r/sub/CLAUDE.md'], sessions: 2, subagents: 1,
     from: '2026-11-01T09:00:00Z', to: '2026-11-05T08:00:00Z' });
@@ -325,4 +325,28 @@ test('a quoted block is not the reply: an Italian reply quoting a long English p
   const reply = 'Ho scritto la nota per il changelog della nuova versione e ho messo anche questa parte, che non è ancora '
     + `nel commit: dimmi se ti piace così.\n\n${quote}\n\nSe vuoi la cambio.`;
   assert.equal(language(reply), 'it');
+});
+
+// Which sections to ask about: per section, the version in effect latest, unless a later one was read already.
+const unread = (text: string, identity: string, readAt: string | null = null): Unread =>
+  ({ section: { path: [], text, hash: text }, identity, readAt });
+function asked(events: Event[], unreadBy: Record<string, Unread[]>) {
+  const c = counter((f) => ({ rules: [], unread: unreadBy[f.content] ?? [] }));
+  for (const e of events) c.on(e);
+  return { pending: c.pending().map((p) => [p.section.text, p.at]), notRead: c.result().notRead };
+}
+
+test('of the versions of a section not read, only the one in effect latest is asked about', () => {
+  assert.deepEqual(asked([start('s1'), files({ '/r/CLAUDE.md': 'A1' }), bash('ls', { at: '2026-11-01T10:00:00Z' }),
+    start('s2'), files({ '/r/CLAUDE.md': 'A2' }), bash('ls', { at: '2026-11-03T10:00:00Z' }),
+    start('s3'), files({ '/r/CLAUDE.md': 'A1' }), bash('ls', { at: '2026-11-02T10:00:00Z' })],
+  { A1: [unread('v1', 'id')], A2: [unread('v2', 'id')] }), { pending: [['v2', '2026-11-03T10:00:00Z']], notRead: 1 });
+});
+
+test('nothing is asked when a version read was in effect as late; a version never in effect during a call is the oldest', () => {
+  assert.deepEqual(asked([start(), files({ '/r/CLAUDE.md': 'A1' }), bash('ls', { at: '2026-11-01T10:00:00Z' })],
+    { A1: [unread('v1', 'id', '2026-11-05T00:00:00Z')] }), { pending: [], notRead: 0 });
+  assert.deepEqual(asked([start(), files({ '/r/CLAUDE.md': 'A1' })], { A1: [unread('v1', 'id')] }),
+    { pending: [['v1', '']], notRead: 1 });
+  assert.deepEqual(asked([start(), files({ '/r/CLAUDE.md': 'A1' })], { A1: [unread('v1', 'id', '')] }), { pending: [], notRead: 0 });
 });
