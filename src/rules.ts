@@ -1,9 +1,12 @@
 // From instruction files to rules: sections, the extraction call, verification, the cache.
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Check, compile, LANGUAGES, verdict } from './check.ts';
 import type { InstructionFile } from './claude-code.ts';
+import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
 const PROMPT_VERSION = 1;
@@ -135,4 +138,169 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
     }
     return found;
   };
+}
+
+/** Sections grouped into calls of at most 30,000 characters of text; a bigger section goes alone. */
+function batches(sections: Section[]): Section[][] {
+  const out: Section[][] = [];
+  let size = Infinity;
+  for (const section of sections) {
+    if (size + section.text.length > 30_000) {
+      out.push([]);
+      size = 0;
+    }
+    out[out.length - 1].push(section);
+    size += section.text.length;
+  }
+  return out;
+}
+
+/** What reading `sections` would cost: each call carries a ~4k-token system prompt; the answer is taken as long as the
+ * text read. Off by up to ~2× either way; the real count is shown after. */
+export function estimate(sections: Section[]): { calls: number; tokens: number } {
+  const calls = batches(sections).length;
+  const chars = sections.reduce((n, s) => n + s.text.length, 0);
+  return { calls, tokens: 4000 * calls + 2 * Math.ceil(chars / 4) };
+}
+
+const PATTERNS = { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' } } };
+const EXAMPLES = {
+  type: 'array',
+  items: { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' } }, required: ['tool', 'value'] },
+};
+const SCHEMA = JSON.stringify({
+  type: 'object',
+  properties: {
+    sections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          rules: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                quote: { type: 'string' },
+                name: { type: 'string' },
+                kind: { enum: ['tool', 'language', 'judgment'] },
+                trigger: { type: 'string' },
+                check: {
+                  type: 'object',
+                  properties: {
+                    field: { type: 'string' }, when: PATTERNS, broken: PATTERNS, ignoreCase: { type: 'boolean' },
+                    language: { type: 'string' },
+                  },
+                },
+                breaking: EXAMPLES,
+                keeping: EXAMPLES,
+              },
+              required: ['quote', 'name', 'kind', 'trigger'],
+            },
+          },
+        },
+        required: ['id', 'rules'],
+      },
+    },
+  },
+  required: ['sections'],
+});
+
+const PROMPT = `You read the instruction files a coding agent (Claude Code) is given, and list the rules in them, so that a tool
+can check later whether the agent followed each one. Below are sections of those files. Return every section by its id
+with the rules it states: an empty list when it states none. A rule tells the agent to do or not to do something;
+descriptions, explanations and context are not rules.
+
+For each rule:
+- quote: the rule's own words, copied exactly from the section: never reworded, typos and formatting (backticks) kept.
+- name: a summary of at most 40 characters, in the rule's own language.
+- kind: "tool" when a single tool call shows, without doubt, whether the rule was kept or broken; "language" for the
+  language the agent must use in its replies to the user (not in code, commits or files); "judgment" for everything
+  else.
+- trigger: when the rule applies, in a few words ("staging files with git").
+
+A "language" rule has check: { "language": "<two-letter ISO 639-1 code>" }.
+
+A "tool" rule has a check over one call: its tool name and one top-level string field of its input.
+- Claude Code tools: Bash (field "command"), Edit (file_path, old_string, new_string), Write (file_path, content),
+  Read (file_path); MCP tools are named mcp__<server>__<tool>.
+- field: the input field matched; left out to match on the tool name alone.
+- when: the calls the rule is about: "tool", a regex over the tool name (anchored, like ^Bash$), and "value", a regex
+  over the field; either may be left out.
+- broken: what makes such a call break the rule: a "tool" or "value" regex, at least one.
+- ignoreCase: true when letter case doesn't matter.
+- The regexes are JavaScript, without flags, and never repeat a group that holds a quantifier, like (a+)+.
+- breaking: two or three example calls { "tool", "value" } that break the rule; keeping: two or three calls the rule is
+  about that keep it. A value is the field's whole value.
+`;
+
+/** `claude -p` isolated: no tools, no session saved, no settings, hooks, MCP servers or slash commands of the user's. */
+const ARGS = ['-p', '--model', MODEL, '--output-format', 'json', '--json-schema', SCHEMA, '--no-session-persistence',
+  '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '', '--settings',
+  '{"disableAllHooks":true}'];
+
+/** Runs claude in an empty folder of its own, removed after, so no project instruction file is loaded with it; null
+ * when there is no claude to run. */
+async function claude(prompt: string, env: NodeJS.ProcessEnv):
+  Promise<{ code: number | null; stdout: string; stderr: string } | null> {
+  const cwd = mkdtempSync(join(tmpdir(), 'heeded-'));
+  try {
+    return await new Promise((resolve) => {
+      const child = spawn('claude', ARGS, { cwd, env });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => (stdout += d));
+      child.stderr.on('data', (d) => (stderr += d));
+      child.on('error', () => resolve(null));
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+      child.stdin.on('error', () => {}); // claude may stop reading, or never start
+      child.stdin.end(prompt);
+    });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Reads the rules of `sections` through the user's own claude, sonnet, one call per batch. Only the sections' text
+ * leaves the machine, secrets redacted; never a file's path. A batch that fails is reported and returns nothing.
+ */
+export async function extract(sections: Section[], env: NodeJS.ProcessEnv):
+  Promise<{ rules: Map<string, unknown[]>; tokens: number; errors: string[] }> {
+  const rules = new Map<string, unknown[]>();
+  const errors: string[] = [];
+  let tokens = 0;
+  for (const batch of batches(sections)) {
+    const body = batch.map((s, i) =>
+      `<section id="${i + 1}" path="${s.path.join(' › ').replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
+    const run = await claude(`${PROMPT}\n${body.join('\n\n')}\n`, env);
+    if (!run) {
+      errors.push('claude not found. install claude code, or run heeded where claude runs.');
+      break;
+    }
+    if (run.code !== 0) {
+      errors.push(`claude exited with code ${run.code}: ${run.stderr.split('\n')[0]}`);
+      continue;
+    }
+    let out;
+    try {
+      out = JSON.parse(run.stdout);
+    } catch {}
+    const answered = out?.structured_output?.sections;
+    const u = out?.usage ?? {};
+    tokens += [u.input_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens, u.output_tokens]
+      .reduce((n: number, t) => n + (typeof t === 'number' ? t : 0), 0);
+    if (!Array.isArray(answered) || !answered.every((a) => typeof a?.id === 'string' && Array.isArray(a.rules))) {
+      errors.push("claude's answer didn't match the schema");
+      continue;
+    }
+    // A section the answer leaves out holds no rule: asking again would spend on every run.
+    for (const s of batch) rules.set(s.hash, []);
+    for (const { id, rules: found } of answered) {
+      const s = batch[Number(id) - 1];
+      if (s) rules.set(s.hash, found);
+    }
+  }
+  return { rules, tokens, errors };
 }
