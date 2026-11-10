@@ -83,17 +83,19 @@ export function writeSession(configDir: string, folder: string, id: string, line
 /**
  * About `bytes` of lines in the proportions measured on real transcripts: assistant lines (the ones heeded parses) ~40%
  * of the bytes, tool results ~30%, request blobs ~12%, the rest attachments and bookkeeping. Every fourth assistant line
- * is an Italian reply, every fifth call runs `git add -A`.
+ * is an Italian reply, every fifth call runs `git add -A`, and each round writes a ~10 KB file through a heredoc.
  */
 export function* mix(bytes: number): Generator<Line> {
   const reply = 'Ho controllato il test che fallisce e il problema è nel parser, quindi adesso lo sistemo. '.repeat(20);
-  for (let size = 0, n = 0; size < bytes; size += 107_000) {
+  for (let size = 0, n = 0; size < bytes; size += 117_000) {
     for (let i = 0; i < 20; i++, n++) {
       const usage = { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: (n * 37) % 500_000, output_tokens: 50 };
       const command = `${n % 5 ? 'git status' : 'git add -A'} && echo ${'x'.repeat(1700)}`;
       yield i % 4 ? assistant({ id: `msg_${n}`, tool: { id: `toolu_${n}`, name: 'Bash', input: { command } }, usage })
         : assistant({ id: `msg_${n}`, text: reply, usage });
     }
+    const write = `cat > src/gen${n}.ts <<'EOF'\n${'export const value = 1; // kill nothing here\n'.repeat(220)}EOF`;
+    yield assistant({ id: `msg_w${n}`, tool: { id: `toolu_w${n}`, name: 'Bash', input: { command: write } } });
     for (let i = 0; i < 3; i++) {
       yield { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: 'y'.repeat(10_000) }] } };
     }
