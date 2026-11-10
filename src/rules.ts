@@ -59,6 +59,8 @@ export interface Rule {
   name: string;
   /** The headings of its section, ancestors first, its own last, joined by ` › `; `''` when it has none. */
   heading: string;
+  /** The words around it in its section, secrets redacted, on one line: a rule's quote alone can read wrong. */
+  context?: string;
   kind: 'tool' | 'language' | 'judgment';
   trigger: string;
   check?: Check & { language?: string };
@@ -83,7 +85,12 @@ export function verify(raw: unknown, section: Section): Rule | null {
   const name = [...String(r.name).replace(/[\p{Cc}\s]+/gu, ' ').trim()].slice(0, 40).join('').trimEnd();
   const own = /^#{1,6}[ \t]+(.+)$/.exec(section.text.split('\n')[0])?.[1].trim();
   const heading = [...section.path, ...(own ? [own] : [])].join(' › ');
-  const rule: Rule = { ...(r as unknown as Rule), id, name, heading };
+  // What the section says around the rule: from 500 characters before its words to 1,000 after.
+  const text = collapse(redact(section.text));
+  const at = text.indexOf(collapse(r.quote));
+  const [from, to] = [Math.max(0, at - 500), Math.min(text.length, at + collapse(r.quote).length + 1000)];
+  const context = `${from ? '…' : ''}${text.slice(from, to)}${to < text.length ? '…' : ''}`;
+  const rule: Rule = { ...(r as unknown as Rule), id, name, heading, context };
   if (rule.kind === 'judgment') {
     // What breaks a judgment rule is for the judge to say: its check only finds the cases.
     const { broken: _, ...check } = rule.check ?? {};

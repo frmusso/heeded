@@ -115,8 +115,9 @@ test('a language rule outside the six languages heeded detects is demoted', () =
 
 test('a judgment rule is kept as is, its trigger in words', () => {
   const raw = { quote: 'write a failing test first', name: 'failing test first', kind: 'judgment', trigger: 'changing code' };
-  const { id, ...rest } = verify(raw, section)!;
+  const { id, context, ...rest } = verify(raw, section)!;
   assert.deepEqual(rest, { ...raw, heading: 'git', noCases: 'no case to judge it on' });
+  assert.equal(context, '## git - never `git add -A`: stage files by name. - talk to the user in italian - write a failing test first');
 });
 
 const commits = sections('# git\n## commits\n- commit only when asked\n- say what you committed')[0];
@@ -146,6 +147,18 @@ test('a judgment rule without a usable when has no cases, with the reason', () =
   assert.equal(noCases({ check: { field: 'command', when: { value: '(x' } } }), "regex doesn't compile: (x");
   assert.equal(noCases({ keeping: undefined }), 'no example of a case');
   assert.equal(noCases({ keeping: [{ tool: 'Bash', value: 'ls' }] }), 'failed its examples: "ls" is not a case');
+});
+
+test('a rule knows the words around it in its section: what they mean, cut, secrets redacted', () => {
+  const key = `gh${'p_'}Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56Qr78`;
+  const text = `## tmux\n\n${'Each service runs in a pane. '.repeat(30)}**Do not hardcode pane ids** (\`%0\`, \`%1\`, …) — they `
+    + `change on every session restart. Discover the right pane by its path with ${key}:\n\n${'tmux list-panes -s -t main\n'.repeat(60)}`;
+  const raw = { quote: '**Do not hardcode pane ids** (`%0`, `%1`, …)', name: 'no hardcoded pane ids', kind: 'judgment', trigger: 'tmux' };
+  const { context } = verify(raw, sections(text)[0])!;
+  assert.ok(context!.includes('— they change on every session restart. Discover the right pane'), context);
+  assert.ok(context!.startsWith('…') && context!.endsWith('…'), context);
+  assert.ok(!context!.includes(key) && !context!.includes('\n'));
+  assert.ok(context!.length <= 1500 + raw.quote.length + 2, String(context!.length));
 });
 
 test('a rule knows the headings it is under', () => {

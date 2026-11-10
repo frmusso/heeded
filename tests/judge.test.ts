@@ -158,7 +158,8 @@ test('a verdict saved loads back; a missing folder, a missing or damaged file lo
 // The judge call, through a fake claude.
 const judged = (quote: string, heading = ''): Rule => ({ id: quote.replace(/\W/g, '').slice(0, 8), quote, name: quote, heading,
   kind: 'judgment', trigger: 't' });
-const commit = judged('commit only when asked', 'git › commits');
+const commit = { ...judged('commit only when asked', 'git › commits'),
+  context: "Commits are the user's call: commit only when asked, never on your own." };
 let cases = 0;
 const kase = (rule: Rule, excerpt: string): Case => ({ id: `${rule.id}-${cases++}`, rule, excerpt, at });
 /** A case's verdict, as the cache has it. */
@@ -196,7 +197,9 @@ test("one isolated claude -p call per batch: the judge's model and schema, the p
   assert.deepEqual(call.cwdEntries, []);
   assert.equal(existsSync(call.cwd), false);
   assert.ok(call.stdin.startsWith('You judge whether a coding agent (Claude Code) followed rules'));
-  assert.ok(call.stdin.includes(`<rule id="1" from="git › commits">\ncommit only when asked\n</rule>`), call.stdin);
+  assert.ok(call.stdin.includes('What the excerpt doesn\'t show is not shown broken'));
+  assert.ok(call.stdin.includes('<rule id="1" from="git › commits">\ncommit only when asked\n<context>Commits are the user\'s call: '
+    + 'commit only when asked, never on your own.</context>\n</rule>'), call.stdin);
   assert.ok(call.stdin.includes(`<case id="1" rule="1">\n${first.excerpt}\n</case>`));
   assert.ok(call.stdin.includes('<rule id="2" from="deploy with …">'));
   assert.ok(call.stdin.includes('<case id="2" rule="2">'));
