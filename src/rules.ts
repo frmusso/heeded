@@ -1,5 +1,6 @@
 // From instruction files to rules: sections, the extraction call, verification, the cache.
 import { createHash } from 'node:crypto';
+import { type Check, compile, LANGUAGES, verdict } from './check.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
 const PROMPT_VERSION = 1;
@@ -40,4 +41,50 @@ export function sections(content: string): Section[] {
   }
   close();
   return out;
+}
+
+/** An example call the extraction gives for a tool rule: the tool and the value of the checked field. */
+interface Example { tool: string; value: string }
+
+export interface Rule {
+  id: string;
+  quote: string;
+  name: string;
+  kind: 'tool' | 'language' | 'judgment';
+  trigger: string;
+  check?: Check & { language?: string };
+  breaking?: Example[];
+  keeping?: Example[];
+  /** Why a rule with a check is not checked. */
+  demoted?: string;
+}
+
+const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+/**
+ * A rule as the extraction returned it, checked here: its quote must be in its section, word for word (spacing aside),
+ * or the rule is dropped; a check that can't be trusted is demoted, with the reason, and never gives a violation.
+ */
+export function verify(raw: unknown, section: Section): Rule | null {
+  const r = raw as Record<string, unknown>;
+  if (typeof r?.quote !== 'string' || !collapse(section.text).includes(collapse(r.quote))) return null;
+  const id = createHash('sha256').update(collapse(r.quote).toLowerCase()).digest('hex').slice(0, 8);
+  const name = [...String(r.name)].slice(0, 40).join('').trimEnd();
+  const rule: Rule = { ...(r as unknown as Rule), id, name };
+  const language = rule.check?.language;
+  const demoted = rule.kind === 'tool' ? demotion(rule)
+    : rule.kind === 'language' && !LANGUAGES.includes(String(language)) ? `language ${language} not supported` : undefined;
+  return demoted ? { ...rule, demoted } : rule;
+}
+
+function demotion(rule: Rule): string | undefined {
+  const compiled = compile(rule.check ?? {});
+  if (typeof compiled === 'string') return compiled;
+  if (!rule.breaking?.length) return 'no breaking example';
+  if (!rule.keeping?.length) return 'no keeping example';
+  const call = (e: Example) => verdict(compiled, e.tool, compiled.field === undefined ? {} : { [compiled.field]: e.value });
+  const breaks = rule.breaking.find((e) => call(e) !== 'broken');
+  if (breaks) return `failed its examples: breaks "${breaks.value}"`;
+  const keeps = rule.keeping.find((e) => call(e) !== 'kept');
+  if (keeps) return `failed its examples: keeps "${keeps.value}"`;
 }

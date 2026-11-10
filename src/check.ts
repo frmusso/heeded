@@ -1,5 +1,8 @@
 // Applying rules to events: tool checks and, for replies, their language.
 
+/** The languages a reply can be detected in. */
+export const LANGUAGES = ['en', 'it', 'es', 'fr', 'de', 'pt'];
+
 /** A tool rule as the extraction writes it: regular expressions over the tool's name and one input field. */
 export interface Check {
   field?: string;
