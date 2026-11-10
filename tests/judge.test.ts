@@ -143,15 +143,16 @@ test('the key: the same excerpt the same key, another excerpt another', () => {
 
 test('a verdict saved loads back; a missing folder, a missing or damaged file loads as nothing', () => {
   const s = sandbox();
-  assert.equal(verdicts(s.cacheDir)('r-k'), null);
+  assert.equal(verdicts(s.cacheDir)('r', 'k'), null);
   saveVerdict(s.cacheDir, 'r-k', { verdict: 'broken', quote: 'git add -A' });
   writeFileSync(join(s.cacheDir, 'heeded', 'verdicts', 'r-cut.json'), '{"verdict":');
   writeFileSync(join(s.cacheDir, 'heeded', 'verdicts', 'r-odd.json'), '{"verdict":"maybe"}');
   const of = verdicts(s.cacheDir);
-  assert.deepEqual(of('r-k'), { verdict: 'broken', quote: 'git add -A' });
-  assert.equal(of('r-missing'), null);
-  assert.equal(of('r-cut'), null);
-  assert.equal(of('r-odd'), null);
+  assert.deepEqual(of('r', 'k'), { verdict: 'broken', quote: 'git add -A' });
+  assert.equal(of('r', 'missing'), null);
+  assert.equal(of('q', 'k'), null);
+  assert.equal(of('r', 'cut'), null);
+  assert.equal(of('r', 'odd'), null);
 });
 
 // The judge call, through a fake claude.
@@ -160,6 +161,11 @@ const judged = (quote: string, heading = ''): Rule => ({ id: quote.replace(/\W/g
 const commit = judged('commit only when asked', 'git › commits');
 let cases = 0;
 const kase = (rule: Rule, excerpt: string): Case => ({ id: `${rule.id}-${cases++}`, rule, excerpt, at });
+/** A case's verdict, as the cache has it. */
+const cached = (dir: string) => {
+  const of = verdicts(dir);
+  return (k: Case) => of(k.rule.id, k.id.slice(k.rule.id.length + 1));
+};
 /** What `claude -p --output-format json --json-schema` prints. */
 const answer = (list: unknown, tokens = [4000, 0, 0, 100]) => JSON.stringify({
   type: 'result', subtype: 'success', is_error: false, structured_output: { cases: list },
@@ -214,8 +220,8 @@ test('verdicts are mapped back by id and cached; an unknown id is ignored, a rep
     { id: '1', verdict: 'broken', quote: 'git commit -m a' }, { id: '1', verdict: 'kept', quote: 'fix it' },
     { id: '9', verdict: 'broken', quote: 'git commit' }]) }]);
   assert.deepEqual(await judge([a, b], env, s.cacheDir), { judged: 2, tokens: 4100, errors: [] });
-  const of = verdicts(s.cacheDir);
-  assert.deepEqual([of(a.id), of(b.id)], [{ verdict: 'broken', quote: 'git commit -m a' }, { verdict: 'kept', quote: 'fix it and commit' }]);
+  const of = cached(s.cacheDir);
+  assert.deepEqual([of(a), of(b)], [{ verdict: 'broken', quote: 'git commit -m a' }, { verdict: 'kept', quote: 'fix it and commit' }]);
 });
 
 test('a quote not in the excerpt, spacing aside, makes the verdict none', async () => {
@@ -226,9 +232,9 @@ test('a quote not in the excerpt, spacing aside, makes the verdict none', async 
     { id: '2', verdict: 'broken', quote: 'git commit -m a' }, { id: '3', verdict: 'kept' }, { id: '4', verdict: 'kept', quote: ' ' },
     { id: '5', verdict: 'none', quote: 'whatever' }]) }]);
   assert.equal((await judge(list, env, s.cacheDir)).judged, 5);
-  const of = verdicts(s.cacheDir);
+  const of = cached(s.cacheDir);
   // A quote is kept on one line: the report prints it as evidence.
-  assert.deepEqual(list.map((k) => of(k.id)), [{ verdict: 'broken', quote: 'fix it call Bash:' }, { verdict: 'none' },
+  assert.deepEqual(list.map(of), [{ verdict: 'broken', quote: 'fix it call Bash:' }, { verdict: 'none' },
     { verdict: 'none' }, { verdict: 'none' }, { verdict: 'none' }]);
 });
 
@@ -238,7 +244,7 @@ test('an unknown verdict, or a case left out, is not cached, and said', async ()
   const { s, env } = claude([{ stdout: answer([{ id: '1', verdict: 'maybe' }, { id: '2', verdict: 'none' }]) }]);
   assert.deepEqual(await judge(list, env, s.cacheDir),
     { judged: 1, tokens: 4100, errors: ["claude's answer left out 2 of 3 cases: they will be judged again"] });
-  assert.deepEqual(list.map((k) => verdicts(s.cacheDir)(k.id)), [null, { verdict: 'none' }, null]);
+  assert.deepEqual(list.map(cached(s.cacheDir)), [null, { verdict: 'none' }, null]);
 });
 
 test('each batch is cached as it comes: a failed second batch keeps the first', async () => {
@@ -247,7 +253,7 @@ test('each batch is cached as it comes: a failed second batch keeps the first', 
   const { s, env } = claude([{ stdout: answer([{ id: '1', verdict: 'none' }]) }, { exit: 1, stderr: 'Error: rate limited\n' }]);
   assert.deepEqual(await judge(list, env, s.cacheDir),
     { judged: 1, tokens: 4100, errors: ['claude exited with code 1: Error: rate limited'] });
-  assert.deepEqual(list.map((k) => verdicts(s.cacheDir)(k.id)), [{ verdict: 'none' }, null]);
+  assert.deepEqual(list.map(cached(s.cacheDir)), [{ verdict: 'none' }, null]);
 });
 
 test('failures as in the extraction: no claude, an exit code, an error answer, an answer off the schema', async () => {
@@ -263,7 +269,7 @@ test('failures as in the extraction: no claude, an exit code, an error answer, a
   const shape = "claude's answer didn't match the schema";
   assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', 'claude: nope', shape, shape]);
   assert.equal(result.judged, 0);
-  assert.deepEqual(list.map((k) => verdicts(s.cacheDir)(k.id)), [null, null, null, null]);
+  assert.deepEqual(list.map(cached(s.cacheDir)), [null, null, null, null]);
 });
 
 // What judging costs, and what a run judges within its budget.

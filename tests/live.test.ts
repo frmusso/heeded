@@ -39,7 +39,7 @@ test('the judge on the labelled set: no false broken, recall 80% or more', { ski
     const list = cases();
     const result = await judge(list, process.env, dir);
     const of = verdicts(dir);
-    const said = list.map((k) => of(k.id)?.verdict);
+    const said = list.map((k) => of(k.rule.id, k.id.slice(k.rule.id.length + 1))?.verdict);
     const broken = LABELLED.map((l, i) => [l.expected === 'broken', said[i] === 'broken']);
     const found = broken.filter(([expected, given]) => expected && given).length;
     const given = broken.filter(([, g]) => g).length;

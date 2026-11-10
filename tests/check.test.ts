@@ -184,7 +184,7 @@ const confirmed = (): Verdict => ({ verdict: 'broken' });
 
 /** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */
 function feed(events: Event[], rulesBy: Record<string, Rule[]>, versionsBy: Record<string, Version[]> = {},
-  verdictOf: (id: string) => Verdict | null = confirmed) {
+  verdictOf: (rule: string, key: string) => Verdict | null = confirmed) {
   const c = counter((f) => (f.type === 'AutoMem' ? null : { rules: rulesBy[f.content] ?? [], versions: versionsBy[f.content] ?? [] }),
     verdictOf);
   for (const e of events) c.on(e);
@@ -393,7 +393,7 @@ const unjudged = () => null;
 /** The ids of the cases waiting, by their call's time. */
 const waitingAt = (events: Event[], rulesBy: Record<string, Rule[]>) =>
   Object.fromEntries(feed(events, rulesBy, {}, unjudged).waiting().tool.flat().map((k) => [k.at, k.id]));
-const by = (verdicts: Record<string, Verdict>) => (id: string) => verdicts[id] ?? null;
+const by = (verdicts: Record<string, Verdict>) => (rule: string, key: string) => verdicts[`${rule}-${key}`] ?? null;
 const at = (day: number) => ({ at: `2026-11-0${day}T10:00:00Z` });
 const tally = (data: Data, r: Rule) => {
   const x = data.rules.find((y) => y.id === r.id)!;
@@ -464,7 +464,8 @@ const said = rule({ quote: 'say what you changed', name: 'say what you changed',
 /** The judge, in turn: the n-th case asked about gets the n-th verdict, the ones after none yet. */
 const inTurn = (verdicts: Verdict[]) => {
   const given = new Map<string, Verdict | null>();
-  return (id: string) => {
+  return (rule: string, key: string) => {
+    const id = `${rule}-${key}`;
     if (!given.has(id)) given.set(id, verdicts[given.size] ?? null);
     return given.get(id)!;
   };
@@ -508,4 +509,11 @@ test('a judgment rule without cases is never a case', () => {
   assert.deepEqual(c.waiting().judgment, []);
   assert.deepEqual(tally(c.result(), vague), { status: 'judgment', applied: 0, broken: 0, judged: 0, toConfirm: 0 });
   assert.equal(c.result().rules[0].reason, 'no case to judge it on');
+});
+
+test('two events that read alike are one case to judge', () => {
+  const events = (s: string) => [start(s), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A')];
+  const c = feed([...events('s1'), ...events('s2')], { A: [addAll] }, {}, unjudged);
+  assert.equal(c.waiting().tool.flat().length, 1);
+  assert.equal(tally(c.result(), addAll).toConfirm, 2);
 });

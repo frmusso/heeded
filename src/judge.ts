@@ -31,16 +31,22 @@ export interface Case { id: string; rule: Rule; excerpt: string; at: string }
 const VERDICTS = ['broken', 'kept', 'none'];
 const folder = (cacheDir: string) => join(cacheDir, 'heeded', 'verdicts');
 
-/** The verdicts cached, read when asked for: the folder is listed once, a file read only when its case is in it. */
-export function verdicts(cacheDir: string): (id: string) => Verdict | null {
+/**
+ * The verdicts cached, by rule and excerpt, read when asked for: the folder is listed once, a file read only when its
+ * case is in it. Most events have no verdict for any rule: their excerpt's key is looked up once, not once per rule.
+ */
+export function verdicts(cacheDir: string): (rule: string, key: string) => Verdict | null {
   let names: Set<string>;
   try {
     names = new Set(readdirSync(folder(cacheDir)));
   } catch {
     names = new Set();
   }
+  const keys = new Set([...names].map((n) => n.slice(n.indexOf('-') + 1, -'.json'.length)));
   const read = new Map<string, Verdict | null>();
-  return (id) => {
+  return (rule, key) => {
+    if (!keys.has(key)) return null;
+    const id = `${rule}-${key}`;
     if (!names.has(`${id}.json`)) return null;
     if (!read.has(id)) {
       let v: Verdict | null = null;
@@ -89,6 +95,9 @@ function line(e: Seen, limit: number): string {
   return prefix + cut(text, limit);
 }
 
+/** An event's excerpt: its key, its time, and its text, built when read. */
+export interface Excerpt { key: string; at: string; readonly text: string }
+
 /** Whose words a prompt holds: `you` for the user's, `task` for what another agent asked. */
 const words = (e: Extract<Event, { kind: 'prompt' }>) => `${e.by === 'user' ? 'you' : 'task'}: ${cut(e.text, WORDS)}`;
 
@@ -112,7 +121,7 @@ export function excerpts() {
   let sizes = [0, 0]; // characters of the lines since: the others', the user's words'
   let dropped = false;
   // Every rule in effect asks about the same event in turn.
-  let memo: { e: Seen; result: { readonly text: string; key: string } } | null = null;
+  let memo: { e: Seen; result: Excerpt } | null = null;
 
   const restart = (line: string | null) => {
     start = line;
@@ -151,7 +160,7 @@ export function excerpts() {
      * text. So the key is made from the case's head as written, the longest its line can be, and the text only when
      * read, with the same lines left out.
      */
-    of(e: Seen): { readonly text: string; key: string } {
+    of(e: Seen): Excerpt {
       if (memo?.e === e) return memo.result;
       const [prefix, raw] = parts(e);
       const caseHead = head(raw, WORDS);
@@ -177,7 +186,7 @@ export function excerpts() {
       for (const l of lines) hash.update('\n').update(l);
       hash.update('\n').update(prefix).update(caseHead);
       let text: string | undefined;
-      memo = { e, result: { key: hash.digest('hex'), get text() {
+      memo = { e, result: { key: hash.digest('hex'), at: e.at, get text() {
         return (text ??= [...lines, prefix + render(caseHead, WORDS)].join('\n'));
       } } };
       return memo.result;
