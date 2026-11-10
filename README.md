@@ -36,9 +36,14 @@ $ npx heeded
 ## how it works
 
 claude code records in each transcript the instruction files it loaded, word for word. heeded splits them into
-sections and, once per section, asks your own `claude` (sonnet) to turn the rules in it into checks: a pattern over a
-tool call, or the language a reply must be in. it shows the estimate and asks first; the answer is cached, and every
-check must pass its own examples before it counts. rules a plain check can't decide are listed as needing a judge.
+sections and asks your own `claude` (sonnet) to turn the rules in each into checks: a pattern over a tool call, or the
+language a reply must be in. it reads only the latest version of a section, and older versions keep the rules whose
+words they hold. it shows the estimate and asks first; the answer is cached, and every check must pass its own examples
+before it counts. rules a plain check can't decide are listed as needing a judge.
+
+a shell command is read the way the shell reads it, one command at a time: what it runs is checked apart from what it
+carries (a file written through a heredoc, a commit message, the pattern of a search), so writing about `rm -rf` is not
+running it, and a rule about commit messages can still read them.
 
 ```text
 $ npx heeded rules

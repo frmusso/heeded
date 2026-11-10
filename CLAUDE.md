@@ -64,8 +64,11 @@ instruction files (from the events) ──▶ rules.ts: sections → cache → v
   and streams them, one pass per file, into neutral events (`transcript`, `instructions`, `compaction`, `call`,
   `reply`). another agent is another adapter emitting the same events.
 - `src/rules.ts`: instruction files into sections; the extraction call (`claude -p`, isolated, one per batch of new
-  sections); local verification of what it returns; the cache, one file per section hash.
-- `src/check.ts`: tool checks, reply language, and the counter: events in, report data out.
+  sections); local verification of what it returns; the cache: one file per section hash, and per section the version
+  read last, whose rules its other versions take.
+- `src/shell.ts`: a shell command line read as a shell reads it, into simple commands, each with what it does and what
+  it carries.
+- `src/check.ts`: tool checks, reply language, and the counter: events in, report data and the sections to read out.
 - `src/report.ts`: the terminal report, `heeded rules`, the json document.
 - `src/redact.ts`: secrets out of anything sent or printed.
 - `scripts/public-tree.ts`: the guard that keeps private notes, notes on who decided what and personal data out of the

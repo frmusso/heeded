@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
-import { type Rule, type Section, sections, type Unread, verify } from '../src/rules.ts';
+import { type Rule, sections, type Unread, verify } from '../src/rules.ts';
 
 function compiled(check: Check) {
   const c = compile(check);
