@@ -317,3 +317,12 @@ test('evidence never reads undefined, and holds no control characters', () => {
   assert.equal(data.rules.find((r) => r.id === addAll.id)!.evidence[0].text, 'git add -A [2J');
   assert.equal(data.rules.find((r) => r.id === mcp.id)!.evidence[0].text, 'mcp__clickup__create_task');
 });
+
+test('a quoted block is not the reply: an Italian reply quoting a long English passage is Italian', () => {
+  const quote = '> I checked the failing test and the problem is in the parser. It reads the whole file into memory, so it\n'
+    + '> breaks on large inputs. I will change it to stream the lines and run the tests again, and then I will update\n'
+    + '> the changelog with the fix and the new limits, so that the people who use it know what to expect from it.';
+  const reply = 'Ho scritto la nota per il changelog della nuova versione e ho messo anche questa parte, che non è ancora '
+    + `nel commit: dimmi se ti piace così.\n\n${quote}\n\nSe vuoi la cambio.`;
+  assert.equal(language(reply), 'it');
+});

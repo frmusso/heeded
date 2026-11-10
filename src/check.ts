@@ -38,11 +38,11 @@ for (const [code, words] of Object.entries(STOPWORDS)) {
 }
 
 /**
- * The language a reply is written in, or null when it can't be told: under 20 words once code, URLs and paths are
- * removed, or no clear winner (at least 5 stopwords, twice the runner-up's).
+ * The language a reply is written in, or null when it can't be told: under 20 words once code, quoted blocks (someone
+ * else's words), URLs and paths are removed, or no clear winner (at least 5 stopwords, twice the runner-up's).
  */
 export function language(text: string): string | null {
-  const prose = text.replace(/(```|~~~)[\s\S]*?(\1|$)/g, ' ').replace(/`[^`\n]*`/g, ' ')
+  const prose = text.replace(/(```|~~~)[\s\S]*?(\1|$)/g, ' ').replace(/^\s*>.*$/gm, ' ').replace(/`[^`\n]*`/g, ' ')
     .replace(/\S*[/\\]\S*/g, ' ');
   const words = prose.toLowerCase().match(/\p{L}+/gu) ?? [];
   if (words.length < 20) return null;
