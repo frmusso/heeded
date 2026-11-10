@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type Check, compile, LANGUAGES, verdict } from './check.ts';
+import { applies, type Check, compile, LANGUAGES, verdict } from './check.ts';
 import type { InstructionFile } from './claude-code.ts';
 import { redact } from './redact.ts';
 
@@ -58,6 +58,8 @@ export interface Rule {
   id: string;
   quote: string;
   name: string;
+  /** The headings of its section, ancestors first, its own last, joined by ` › `; `''` when it has none. */
+  heading: string;
   kind: 'tool' | 'language' | 'judgment';
   trigger: string;
   check?: Check & { language?: string };
@@ -65,6 +67,8 @@ export interface Rule {
   keeping?: Example[];
   /** Why a rule with a check is not checked. */
   demoted?: string;
+  /** Why a judgment rule has no cases to judge. */
+  noCases?: string;
 }
 
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -78,7 +82,16 @@ export function verify(raw: unknown, section: Section): Rule | null {
   if (typeof r?.quote !== 'string' || !collapse(redact(section.text)).includes(collapse(r.quote))) return null;
   const id = createHash('sha256').update(collapse(r.quote).toLowerCase()).digest('hex').slice(0, 8);
   const name = [...String(r.name).replace(/[\p{Cc}\s]+/gu, ' ').trim()].slice(0, 40).join('').trimEnd();
-  const rule: Rule = { ...(r as unknown as Rule), id, name };
+  const own = /^#{1,6}[ \t]+(.+)$/.exec(section.text.split('\n')[0])?.[1].trim();
+  const heading = [...section.path, ...(own ? [own] : [])].join(' › ');
+  const rule: Rule = { ...(r as unknown as Rule), id, name, heading };
+  if (rule.kind === 'judgment') {
+    // What breaks a judgment rule is for the judge to say: its check only finds the cases.
+    const { broken: _, ...check } = rule.check ?? {};
+    const judged = rule.check ? { ...rule, check } : rule;
+    const noCases = casesless(judged);
+    return noCases ? { ...judged, noCases } : judged;
+  }
   const language = rule.check?.language;
   const demoted = rule.kind === 'tool' ? demotion(rule)
     : rule.kind === 'language' && !LANGUAGES.includes(String(language)) ? `language ${language} not supported` : undefined;
@@ -86,7 +99,9 @@ export function verify(raw: unknown, section: Section): Rule | null {
 }
 
 function demotion(rule: Rule): string | undefined {
-  const compiled = compile(rule.check ?? {});
+  const b = rule.check?.broken;
+  if (b?.tool === undefined && b?.value === undefined && b?.data === undefined) return 'no broken pattern';
+  const compiled = compile(rule.check!);
   if (typeof compiled === 'string') return compiled;
   if (!rule.breaking?.length) return 'no breaking example';
   if (!rule.keeping?.length) return 'no keeping example';
@@ -97,6 +112,19 @@ function demotion(rule: Rule): string | undefined {
   const keeps = rule.keeping.find((e) => call(e) === 'broken');
   if (keeps) return `failed its examples: keeps "${keeps.value}"`;
   if (!rule.keeping.some((e) => call(e) === 'kept')) return 'failed its examples: none of the keeping examples applies';
+}
+
+/** Why a judgment rule has no case a judge could read, if so: a rule about replies has every reply; another needs a
+ * `when` that compiles and finds each of its keeping examples. */
+function casesless(rule: Rule): string | undefined {
+  const c = rule.check;
+  if (c?.reply === true) return;
+  if (c?.when?.tool === undefined && c?.when?.value === undefined && c?.when?.data === undefined) return 'no case to judge it on';
+  const compiled = compile(c);
+  if (typeof compiled === 'string') return compiled;
+  if (!rule.keeping?.length) return 'no example of a case';
+  const missed = rule.keeping.find((e) => !applies(compiled, e.tool, compiled.field === undefined ? {} : { [compiled.field]: e.value }));
+  if (missed) return `failed its examples: "${missed.value}" is not a case`;
 }
 
 /** A section's rules as the extraction returned them, or null when they were never read (or the file is damaged). */

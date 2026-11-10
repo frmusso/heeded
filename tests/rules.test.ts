@@ -84,6 +84,12 @@ test('a tool rule whose pattern is refused is demoted, with the reason', () => {
   assert.equal(verify(gitAdd, section)!.demoted, undefined);
 });
 
+test('a tool rule nothing can break is demoted', () => {
+  const when = { field: 'command', when: gitAdd.check.when };
+  assert.equal(verify({ ...gitAdd, check: when }, section)!.demoted, 'no broken pattern');
+  assert.equal(verify({ ...gitAdd, check: { ...when, broken: {} } }, section)!.demoted, 'no broken pattern');
+});
+
 test('a tool rule without an example that breaks it and one that keeps it is demoted', () => {
   assert.equal(verify({ ...gitAdd, breaking: [] }, section)!.demoted, 'no breaking example');
   assert.equal(verify({ ...gitAdd, keeping: undefined }, section)!.demoted, 'no keeping example');
@@ -110,7 +116,41 @@ test('a language rule outside the six languages heeded detects is demoted', () =
 test('a judgment rule is kept as is, its trigger in words', () => {
   const raw = { quote: 'write a failing test first', name: 'failing test first', kind: 'judgment', trigger: 'changing code' };
   const { id, ...rest } = verify(raw, section)!;
-  assert.deepEqual(rest, raw);
+  assert.deepEqual(rest, { ...raw, heading: 'git', noCases: 'no case to judge it on' });
+});
+
+const commits = sections('# git\n## commits\n- commit only when asked\n- say what you committed')[0];
+const commit = {
+  quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment', trigger: 'committing',
+  check: { field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' }, broken: { value: '(' } },
+  keeping: [{ tool: 'Bash', value: 'git commit -m "fix: x"' }],
+};
+
+test('a judgment rule with a when is usable when its examples are cases of it', () => {
+  const rule = verify(commit, commits)!;
+  assert.equal(rule.noCases, undefined);
+  // What breaks it is the judge's to say: a broken pattern is dropped, even one that doesn't compile.
+  assert.deepEqual(rule.check, { field: 'command', when: commit.check.when });
+});
+
+test('a judgment rule about replies needs no example', () => {
+  const reply = { quote: 'say what you committed', name: 'say what you committed', kind: 'judgment', trigger: 'replying',
+    check: { reply: true } };
+  assert.equal(verify(reply, commits)!.noCases, undefined);
+});
+
+test('a judgment rule without a usable when has no cases, with the reason', () => {
+  const noCases = (patch: object) => verify({ ...commit, ...patch }, commits)!.noCases;
+  assert.equal(noCases({ check: undefined }), 'no case to judge it on');
+  assert.equal(noCases({ check: { field: 'command', broken: { value: 'x' } } }), 'no case to judge it on');
+  assert.equal(noCases({ check: { field: 'command', when: { value: '(x' } } }), "regex doesn't compile: (x");
+  assert.equal(noCases({ keeping: undefined }), 'no example of a case');
+  assert.equal(noCases({ keeping: [{ tool: 'Bash', value: 'ls' }] }), 'failed its examples: "ls" is not a case');
+});
+
+test('a rule knows the headings it is under', () => {
+  assert.equal(verify(commit, commits)!.heading, 'git › commits');
+  assert.equal(verify(commit, sections('- commit only when asked')[0])!.heading, '');
 });
 
 test('the cache: what is saved loads back; a missing or corrupt file loads as nothing', () => {

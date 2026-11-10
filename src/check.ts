@@ -56,14 +56,16 @@ export function language(text: string): string | null {
 }
 
 /**
- * A tool rule as the extraction writes it: regular expressions over the tool's name and one input field. A shell
+ * A rule's check as the extraction writes it: regular expressions over the tool's name and one input field. A shell
  * `command` is read one simple command at a time: `value` patterns see what it does, `data` patterns what it carries.
+ * A judgment rule's check has no `broken`: it finds the calls a judge will read, or with `reply` every reply.
  */
 export interface Check {
   field?: string;
   when?: { tool?: string; value?: string; data?: string };
   broken?: { tool?: string; value?: string; data?: string };
   ignoreCase?: boolean;
+  reply?: boolean;
 }
 
 interface Patterns { tool?: RegExp; value?: RegExp; data?: RegExp }
@@ -96,8 +98,6 @@ function exponential(source: string): boolean {
  * calls) nor `u` (model-written patterns often escape characters it rejects); `i` only when the check asks.
  */
 export function compile(check: Check): Compiled | string {
-  const b = check.broken;
-  if (b?.tool === undefined && b?.value === undefined && b?.data === undefined) return 'no broken pattern';
   const flags = check.ignoreCase ? 'i' : '';
   const compiled: Compiled = { field: check.field, when: {}, broken: {} };
   for (const part of ['when', 'broken'] as const) {
@@ -150,6 +150,11 @@ function judge(c: Compiled, tool: string, input: Record<string, unknown>): { ver
 
 export function verdict(c: Compiled, tool: string, input: Record<string, unknown>): 'none' | 'kept' | 'broken' {
   return judge(c, tool, input).verdict;
+}
+
+/** Whether a call is one the check is about, whatever would break it. */
+export function applies(c: Compiled, tool: string, input: Record<string, unknown>): boolean {
+  return judge(c, tool, input).verdict !== 'none';
 }
 
 /**

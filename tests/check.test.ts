@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
+import { applies, type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
 import { type Rule, sections, type Version, verify } from '../src/rules.ts';
 
@@ -103,9 +103,11 @@ test('a repeated group holding a quantifier or an alternation is refused: it can
   }
 });
 
-test('a check nothing can break is refused', () => {
-  assert.equal(compile({ field: 'command', when: { tool: '^Bash$' } }), 'no broken pattern');
-  assert.equal(compile({ field: 'command', when: { tool: '^Bash$' }, broken: {} }), 'no broken pattern');
+test('a check with only a when compiles: it finds the calls it is about', () => {
+  const c = compiled({ field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' } });
+  assert.equal(applies(c, 'Bash', { command: 'git commit -m x' }), true);
+  assert.equal(applies(c, 'Bash', { command: 'git status' }), false);
+  assert.equal(applies(c, 'Edit', { command: 'git commit -m x' }), false);
 });
 
 const replies: [string, string][] = [
