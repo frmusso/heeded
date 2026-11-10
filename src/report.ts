@@ -45,8 +45,8 @@ function columns(rows: string[][]): string[] {
 export function text(r: Report, o: TextOptions): string {
   const home = (path: string) => tilde(path, o.home);
   const color = (code: number, off: number, s: string) => paint(o.color, code, off, s);
-  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.map((l) => cut(l, o.columns))
-    .join('\n')).join('\n\n')}\n`.replace(/^( {2})([✗✓○])/gm, (_, indent, mark) =>
+  // Only rules and evidence are cut to the width: a folder's path is never cut.
+  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {2})([✗✓○])/gm, (_, indent, mark) =>
     indent + (mark === '✗' ? color(31, 39, mark) : mark === '✓' ? color(32, 39, mark) : color(2, 22, mark)))
     .replace(/^( {6}[a-z]{3} \d.*)$/gm, (line) => color(2, 22, line));
   const unrecognized = r.unrecognized.length
@@ -72,7 +72,7 @@ export function text(r: Report, o: TextOptions): string {
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 4)) > o.columns) width--;
   const mark = { broken: '✗', kept: '✓', 'never-applied': '○' } as Record<string, string>;
-  const lines = laid(width).map((l, i) => `  ${mark[checked[i].status]} ${l}`);
+  const lines = laid(width).map((l, i) => cut(`  ${mark[checked[i].status]} ${l}`, o.columns));
   const rules: string[] = [];
   checked.forEach((x, i) => {
     rules.push(lines[i]);
@@ -80,7 +80,7 @@ export function text(r: Report, o: TextOptions): string {
       rules.push(`      after compaction kept ${kept(x.afterCompaction.applied, x.afterCompaction.broken)} of ${thousands(x.afterCompaction.applied)}`);
     }
     for (const e of x.broken ? x.evidence.slice(0, 3) : []) {
-      rules.push(`      ${date(e.at).padEnd(6)}  ${e.session.slice(0, 8)}  ${e.text}`);
+      rules.push(cut(`      ${date(e.at).padEnd(6)}  ${e.session.slice(0, 8)}  ${e.text}`, o.columns));
     }
   });
 
