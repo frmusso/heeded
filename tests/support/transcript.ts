@@ -37,7 +37,8 @@ const MESSAGES = new Set(['user', 'assistant', 'attachment', 'system']);
 let clock = Date.parse('2026-11-01T09:00:00Z');
 let count = 0;
 
-function stamp(line: Line, cwd: string, sessionId: string, agentId: string | null): string {
+function stamp(line: Line | string, cwd: string, sessionId: string, agentId: string | null): string {
+  if (typeof line === 'string') return line; // a raw line, written as given
   if (!MESSAGES.has(line.type as string)) return JSON.stringify({ ...line, sessionId });
   const { cwd: ownCwd, timestamp, ...rest } = line;
   count++;
@@ -49,12 +50,12 @@ function stamp(line: Line, cwd: string, sessionId: string, agentId: string | nul
   });
 }
 
-const write = (file: string, lines: Line[], cwd: string, id: string, agent: string | null) =>
+const write = (file: string, lines: (Line | string)[], cwd: string, id: string, agent: string | null) =>
   writeFileSync(file, lines.map((l) => stamp(l, cwd, id, agent) + '\n').join(''));
 
 /** Writes a session run in `folder` (a line's own `cwd` wins), and its subagents; returns the main file's path. */
-export function writeSession(configDir: string, folder: string, id: string, lines: Line[],
-  subagents: Record<string, Line[]> = {}): string {
+export function writeSession(configDir: string, folder: string, id: string, lines: (Line | string)[],
+  subagents: Record<string, (Line | string)[]> = {}): string {
   const dir = join(configDir, 'projects', folder.replace(/[^a-zA-Z0-9]/g, '-'));
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${id}.jsonl`);

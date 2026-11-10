@@ -55,15 +55,16 @@ function flush(state: State, emit: (e: Event) => void) {
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const tokens = (v: unknown) => (typeof v === 'number' ? v : 0);
 
-/** The events of one line. Only the lines heeded needs are parsed, found by a substring first. */
-function onLine(line: string, state: State, out: (e: Event) => void) {
+/** The events of one line; false when it should have parsed and didn't. Only the lines heeded needs are parsed, found
+ * by a substring first. */
+function onLine(line: string, state: State, out: (e: Event) => void): boolean {
   if (!line.includes('"type":"assistant"') && !line.includes('"type":"instructions"')
-    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"')) return;
+    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"')) return true;
   let o;
   try {
     o = JSON.parse(line);
   } catch {
-    return;
+    return false;
   }
   // A message's reply goes out before anything that follows it.
   const emit = (e: Event) => {
@@ -103,6 +104,7 @@ function onLine(line: string, state: State, out: (e: Event) => void) {
     state.compactions++;
     state.replace = true;
   }
+  return true;
 }
 
 /**
@@ -110,15 +112,24 @@ function onLine(line: string, state: State, out: (e: Event) => void) {
  * when it ran in the folder: decided by the first line that records a `cwd`, the only line parsed for it; a file that
  * never records one stays in scope, since its project folder's name already matched. Events of the lines before that
  * one wait for the decision.
+ *
+ * A file read whole is unrecognized when, from 20 lines on, more than half don't parse (a line that isn't `{…}`, or one
+ * heeded parses and can't) or none is an assistant or user line: Claude Code may have changed its format, and an empty
+ * result would hide it.
  */
 async function readFile(path: string, session: string, agent: string | null, inside: ((cwd: string) => boolean) | null,
-  emit: (e: Event) => void): Promise<boolean> {
+  emit: (e: Event) => void, unrecognized: string[]): Promise<boolean> {
   let decided = inside === null;
   const held: Event[] = [];
   if (decided) emit({ kind: 'transcript', session, agent });
   const out = (e: Event) => (decided ? emit(e) : held.push(e));
   const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null };
+  let total = 0;
+  let bad = 0;
+  let messages = false;
   for await (const line of lines(path)) {
+    if (!line) continue;
+    total++;
     if (!decided && line.includes('"cwd":"')) {
       let cwd: unknown;
       try {
@@ -131,10 +142,12 @@ async function readFile(path: string, session: string, agent: string | null, ins
         held.forEach(emit);
       }
     }
-    onLine(line, state, out);
+    if (line.includes('"type":"assistant"') || line.includes('"type":"user"')) messages = true;
+    if (line[0] !== '{' || !line.endsWith('}') || !onLine(line, state, out)) bad++;
   }
   flush(state, out);
-  if (!decided) {
+  if (total >= 20 && (bad * 2 > total || !messages)) unrecognized.push(path);
+  if (!decided && total > 0) {
     emit({ kind: 'transcript', session, agent });
     held.forEach(emit);
   }
@@ -144,7 +157,8 @@ async function readFile(path: string, session: string, agent: string | null, ins
 /** Claude Code names a project's folder after its path, every character but a letter or a digit turned into `-`. */
 const encode = (path: string) => path.replace(/[^a-zA-Z0-9]/g, '-');
 
-export async function read(configDir: string, folder: string, emit: (e: Event) => void): Promise<void> {
+export async function read(configDir: string, folder: string, emit: (e: Event) => void): Promise<{ unrecognized: string[] }> {
+  const unrecognized: string[] = [];
   // Claude Code records the path it was started from, which may be the folder's real path or a symlink to it.
   const folders = [...new Set([folder, await realpath(folder).catch(() => folder)])];
   const names = folders.map(encode);
@@ -156,12 +170,14 @@ export async function read(configDir: string, folder: string, emit: (e: Event) =
     for (const file of await entries(project)) {
       if (!file.isFile() || !file.name.endsWith('.jsonl')) continue;
       const session = file.name.slice(0, -'.jsonl'.length);
-      if (!(await readFile(join(project, file.name), session, null, inside, emit))) continue;
+      if (!(await readFile(join(project, file.name), session, null, inside, emit, unrecognized))) continue;
       const subagents = join(project, session, 'subagents');
       for (const sub of await entries(subagents)) {
         if (!sub.isFile() || !sub.name.startsWith('agent-') || !sub.name.endsWith('.jsonl')) continue;
-        await readFile(join(subagents, sub.name), session, sub.name.slice('agent-'.length, -'.jsonl'.length), null, emit);
+        await readFile(join(subagents, sub.name), session, sub.name.slice('agent-'.length, -'.jsonl'.length), null, emit,
+          unrecognized);
       }
     }
   }
+  return { unrecognized };
 }

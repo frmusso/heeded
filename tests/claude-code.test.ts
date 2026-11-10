@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { type Event, read } from '../src/claude-code.ts';
@@ -165,4 +165,66 @@ test('noise and user lines give nothing, even a user line holding an assistant-s
   writeSession(s.configDir, repo, 'a', [...types.map((t) => noise(t, 100)), user('hi'), summary(),
     { ...user('done'), toolUseResult: nestedAssistant }]);
   assert.deepEqual(await events(s.configDir, repo), [{ kind: 'transcript', session: 'a', agent: null }]);
+});
+
+test('a line cut short is skipped, the lines around it read', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const tool = { id: 'tu1', name: 'Bash', input: { command: 'ls' } };
+  writeSession(s.configDir, repo, 'a', [instructions([claudeMd]), '{"type":"assistant","message":{"id":"m1","content":[{"ty',
+    assistant({ id: 'm2', tool })]);
+  assert.deepEqual((await events(s.configDir, repo)).map((e) => e.kind), ['transcript', 'instructions', 'call']);
+});
+
+test('shapes heeded does not know are skipped', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const bad = (line: Record<string, unknown>, patch: object) => ({ ...line, ...patch });
+  writeSession(s.configDir, repo, 'a', [
+    { type: 'attachment', attachment: { type: 'instructions' } },
+    { type: 'attachment', attachment: { type: 'nested_memory', path: '/r/x/CLAUDE.md' } },
+    { type: 'attachment', attachment: { type: 'instructions', files: [{ path: '/r/CLAUDE.md' }, claudeMd] } },
+    { type: 'system', subtype: 'compact_boundary' },
+    bad(assistant({ id: 'm1', text: 'x' }), { message: { id: 'm1', content: 'x' } }),
+    assistant({ id: 'm2', tool: { name: 'Bash', input: { command: 'ls' } } as never }),
+    assistant({ id: 'm3', tool: { id: 'tu3', name: 'Bash', input: 'ls' } as never }),
+  ]);
+  assert.deepEqual((await events(s.configDir, repo)).slice(1), [{ kind: 'instructions', files: [claudeMd], replace: false }]);
+});
+
+const unrecognized = async (configDir: string, folder: string) => (await read(configDir, folder, () => {})).unrecognized;
+const lines = (n: number, line: string) => Array.from({ length: n }, () => line);
+
+test('from 20 lines on, a file mostly unparsable is named as unrecognized', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const a = writeSession(s.configDir, repo, 'a', [user('hi'), ...lines(9, '{"type":"user"}'), ...lines(11, 'type=user')]);
+  const b = writeSession(s.configDir, repo, 'b', [user('hi'), ...lines(9, '{"type":"user"}'),
+    ...lines(11, '{"type":"assistant" cut}')]);
+  assert.deepEqual(await unrecognized(s.configDir, repo), [a, b]);
+});
+
+test('from 20 lines on, a file with no assistant or user line is named as unrecognized', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const file = writeSession(s.configDir, repo, 'a', [{ type: 'attachment', attachment: { type: 'date' } },
+    ...lines(19, '{"type":"progress"}')]);
+  assert.deepEqual(await unrecognized(s.configDir, repo), [file]);
+});
+
+test('under 20 lines a file is not judged, and half unparsable is not most', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  writeSession(s.configDir, repo, 'a', lines(19, 'type=user'));
+  writeSession(s.configDir, repo, 'b', [user('hi'), ...lines(9, '{"type":"user"}'), ...lines(10, 'type=user')]);
+  assert.deepEqual(await unrecognized(s.configDir, repo), []);
+});
+
+test('an empty file: no events, not unrecognized', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const file = writeSession(s.configDir, repo, 'a', []);
+  writeFileSync(file, '');
+  assert.deepEqual(await events(s.configDir, repo), []);
+  assert.deepEqual(await unrecognized(s.configDir, repo), []);
 });
