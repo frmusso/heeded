@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { estimate, extract, type Section } from '../src/rules.ts';
+import { estimate, extract, type Section, sections } from '../src/rules.ts';
 import { installFakeClaude } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
 
@@ -52,11 +52,11 @@ test('one isolated claude -p call per batch: the exact flags, an empty folder of
   assert.ok(!call.stdin.includes(s.root));
 });
 
-test('rules come back by section id, unknown ids ignored, a section left out holding none; tokens summed', async () => {
+test('rules come back by section id, unknown ids ignored; tokens summed', async () => {
   const rule = { quote: 'q', name: 'n', kind: 'judgment', trigger: 't' };
   const { env, calls } = claude([
     { stdout: answer([{ id: '1', rules: [rule] }, { id: '9', rules: [rule] }], [3800, 100, 0, 200]) },
-    { stdout: answer([{ id: '1', rules: [] }], [3800, 0, 50, 300]) },
+    { stdout: answer([{ id: '2', rules: [] }, { id: '1', rules: [] }], [3800, 0, 50, 300]) },
   ]);
   const result = await extract([section('a'.repeat(20_000), 'ha'), section('b'.repeat(25_000), 'hb'), section('c', 'hc')], env);
   assert.equal(calls().length, 2);
@@ -88,4 +88,21 @@ test('a call that fails or answers out of shape: an error, nothing read for its 
 test("the sandbox's PATH holds only its own folder, so the real claude is never reached, even when it sits next to node", () => {
   const s = sandbox();
   for (const dir of s.env.PATH.split(':')) assert.ok(dir.startsWith(s.root), dir);
+});
+
+test('a secret in a heading above the section never reaches claude either', async () => {
+  const { env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  const key = `gh${'p_'}Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56Qr78`;
+  const [, section] = sections(`# deploy with ${key}\n\nhow\n\n## rules\n\n- never push`);
+  await extract([section], env);
+  assert.ok(!calls()[0].stdin.includes(key));
+  assert.match(calls()[0].stdin, /path="deploy with …"/);
+});
+
+test('an answer that leaves a section out: an error, nothing read for its batch', async () => {
+  const rule = { quote: 'q', name: 'n', kind: 'judgment', trigger: 't' };
+  const { env } = claude([{ stdout: answer([{ id: 'section-1', rules: [rule] }, { id: '2', rules: [] }]) }]);
+  const result = await extract([section('a', 'ha'), section('b', 'hb')], env);
+  assert.deepEqual(result.errors, ["claude's answer didn't match the schema"]);
+  assert.deepEqual(result.rules, new Map());
 });

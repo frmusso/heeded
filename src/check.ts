@@ -65,8 +65,27 @@ export interface Check {
 interface Patterns { tool?: RegExp; value?: RegExp }
 interface Compiled { field?: string; when: Patterns; broken: Patterns }
 
-/** A group holding a quantifier, itself quantified — `(a+)+`, `(\\w+\\s?)*` — can take exponential time on a long value. */
-const NESTED = /\((?:[^()\\]|\\.)*[*+}](?:[^()\\]|\\.)*\)[*+{]/;
+/**
+ * Whether a pattern repeats a group that holds a quantifier or an alternation, at any depth — `(a+)+`, `((a+))+`,
+ * `(a|a)+` — the shapes that can take exponential time on a long value. Character classes are read as one atom.
+ */
+function exponential(source: string): boolean {
+  const open: boolean[] = []; // per open group: whether it holds a quantifier or an alternation
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') i++;
+    else if (c === '[') {
+      for (i++; i < source.length && source[i] !== ']'; i++) if (source[i] === '\\') i++;
+    } else if (c === '(') open.push(false);
+    else if (c === ')') {
+      const holds = open.pop() ?? false;
+      const repeated = /[*+{]/.test(source[i + 1] ?? '');
+      if (holds && repeated) return true;
+      if (open.length && (holds || repeated)) open[open.length - 1] = true;
+    } else if (/[*+{|]/.test(c) && open.length) open[open.length - 1] = true;
+  }
+  return false;
+}
 
 /**
  * The check's patterns as regular expressions, or why they can't be used. Never `g` or `y` (they keep state between
@@ -80,7 +99,7 @@ export function compile(check: Check): Compiled | string {
     for (const key of ['tool', 'value'] as const) {
       const source = check[part]?.[key];
       if (source === undefined) continue;
-      if (NESTED.test(source)) return `regex repeats a quantified group: ${source}`;
+      if (exponential(source)) return `regex may take exponential time: ${source}`;
       try {
         compiled[part][key] = new RegExp(source, flags);
       } catch {

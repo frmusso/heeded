@@ -1,7 +1,7 @@
 // The Claude Code adapter, the only module that knows where Claude Code keeps its transcripts and what their lines look
 // like: it finds the transcripts of the sessions run in a folder and streams them into neutral events.
-import { createReadStream, type Dirent } from 'node:fs';
-import { readdir, realpath } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { type FileHandle, open, readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface InstructionFile { path: string; type: string; content: string }
@@ -23,10 +23,10 @@ async function entries(dir: string): Promise<Dirent[]> {
 }
 
 /** A file's lines as its bytes arrive, never the whole file in memory. */
-async function* lines(path: string): AsyncGenerator<string> {
+async function* lines(file: FileHandle): AsyncGenerator<string> {
   const decoder = new TextDecoder();
   let rest = '';
-  for await (const chunk of createReadStream(path)) {
+  for await (const chunk of file.createReadStream()) {
     const text = decoder.decode(chunk as Buffer, { stream: true });
     let start = 0;
     for (let end = text.indexOf('\n'); end >= 0; end = text.indexOf('\n', start)) {
@@ -119,6 +119,8 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
  */
 async function readFile(path: string, session: string, agent: string | null, inside: ((cwd: string) => boolean) | null,
   emit: (e: Event) => void, unrecognized: string[]): Promise<boolean> {
+  const file = await open(path).catch(() => null);
+  if (!file) return false; // deleted since it was listed, or not readable: skipped
   let decided = inside === null;
   const held: Event[] = [];
   if (decided) emit({ kind: 'transcript', session, agent });
@@ -127,7 +129,7 @@ async function readFile(path: string, session: string, agent: string | null, ins
   let total = 0;
   let bad = 0;
   let messages = false;
-  for await (const line of lines(path)) {
+  for await (const line of lines(file)) {
     if (!line) continue;
     total++;
     if (!decided && line.includes('"cwd":"')) {

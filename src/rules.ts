@@ -68,12 +68,12 @@ export interface Rule {
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /**
- * A rule as the extraction returned it, checked here: its quote must be in its section, word for word (spacing aside),
- * or the rule is dropped; a check that can't be trusted is demoted, with the reason, and never gives a violation.
+ * A rule as the extraction returned it, checked here: its quote must be in its section as the model read it (secrets
+ * redacted), word for word (spacing aside), or the rule is dropped; a check that can't be trusted is demoted, with the reason, and never gives a violation.
  */
 export function verify(raw: unknown, section: Section): Rule | null {
   const r = raw as Record<string, unknown>;
-  if (typeof r?.quote !== 'string' || !collapse(section.text).includes(collapse(r.quote))) return null;
+  if (typeof r?.quote !== 'string' || !collapse(redact(section.text)).includes(collapse(r.quote))) return null;
   const id = createHash('sha256').update(collapse(r.quote).toLowerCase()).digest('hex').slice(0, 8);
   const name = [...String(r.name)].slice(0, 40).join('').trimEnd();
   const rule: Rule = { ...(r as unknown as Rule), id, name };
@@ -273,7 +273,7 @@ export async function extract(sections: Section[], env: NodeJS.ProcessEnv):
   let tokens = 0;
   for (const batch of batches(sections)) {
     const body = batch.map((s, i) =>
-      `<section id="${i + 1}" path="${s.path.join(' › ').replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
+      `<section id="${i + 1}" path="${redact(s.path.join(' › ')).replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
     const run = await claude(`${PROMPT}\n${body.join('\n\n')}\n`, env);
     if (!run) {
       errors.push('claude not found. install claude code, or run heeded where claude runs.');
@@ -291,16 +291,13 @@ export async function extract(sections: Section[], env: NodeJS.ProcessEnv):
     const u = out?.usage ?? {};
     tokens += [u.input_tokens, u.cache_creation_input_tokens, u.cache_read_input_tokens, u.output_tokens]
       .reduce((n: number, t) => n + (typeof t === 'number' ? t : 0), 0);
-    if (!Array.isArray(answered) || !answered.every((a) => typeof a?.id === 'string' && Array.isArray(a.rules))) {
+    // Every section must be answered: one left out would be cached as holding no rule, and never read again.
+    const byId = new Map(Array.isArray(answered) ? answered.map((a) => [a?.id, a?.rules]) : []);
+    if (!batch.every((_, i) => Array.isArray(byId.get(String(i + 1))))) {
       errors.push("claude's answer didn't match the schema");
       continue;
     }
-    // A section the answer leaves out holds no rule: asking again would spend on every run.
-    for (const s of batch) rules.set(s.hash, []);
-    for (const { id, rules: found } of answered) {
-      const s = batch[Number(id) - 1];
-      if (s) rules.set(s.hash, found);
-    }
+    batch.forEach((s, i) => rules.set(s.hash, byId.get(String(i + 1))));
   }
   return { rules, tokens, errors };
 }

@@ -76,6 +76,16 @@ export async function main(argv: string[], io: IO): Promise<number> {
     return 0;
   }
 
+  try {
+    return await run(command, args.values.json === true, io);
+  } catch (e) {
+    io.err(`heeded: ${String((e as Error).message).split('\n')[0]}\n`);
+    return 1;
+  }
+}
+
+/** The report, after reading new sections if the user says so. */
+async function run(command: string | undefined, asJson: boolean, io: IO): Promise<number> {
   const home = io.env.HOME || homedir();
   const configDir = io.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
   const cacheDir = io.env.XDG_CACHE_HOME || join(home, '.cache');
@@ -86,7 +96,9 @@ export async function main(argv: string[], io: IO): Promise<number> {
     // Every call costs ~4k tokens: the estimate is never under a thousand.
     const k = Math.round(estimate(missing).tokens / 1000);
     io.err(`${plural(missing.length, 'rule section')} not read yet · claude sonnet · ~${k}k tokens\n`);
-    if (/^y(es)?$/i.test((await io.ask('read them now? [y/N] ')).trim())) {
+    // ctrl-c or ctrl-d at the question is a no.
+    const answer = await io.ask('read them now? [y/N] ').catch(() => '');
+    if (/^y(es)?$/i.test(answer.trim())) {
       const found = await extract(missing, io.env);
       for (const [hash, list] of found.rules) save(cacheDir, hash, list);
       if (found.rules.size) io.err(`read ${plural(found.rules.size, 'section')} · ${found.tokens.toLocaleString('en-US')} tokens\n`);
@@ -97,7 +109,7 @@ export async function main(argv: string[], io: IO): Promise<number> {
   }
 
   const color = io.columns !== undefined && !io.env.NO_COLOR;
-  if (args.values.json) io.out(json(report));
+  if (asJson) io.out(json(report));
   else if (command === 'rules' && report.sessions && report.files.length) io.out(rules(report, { color, home }));
   else io.out(text(report, { columns: io.columns ?? 80, color, now: new Date(), home }));
   return code;

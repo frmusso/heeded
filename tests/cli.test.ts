@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { main } from '../src/cli.ts';
@@ -67,13 +67,19 @@ function setup({ session = true, claude = true, cached = false } = {}) {
   if (cached) save(s.cacheDir, sections(content)[0].hash, [gitAdd]);
   const log = join(s.root, 'claude.log');
   const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').length : 0);
-  const heeded = async (args: string[], { terminal = false, reply = 'y', columns = undefined as number | undefined, env = {} } = {}) => {
+  const heeded = async (args: string[],
+    { terminal = false, reply = 'y' as string | Error, columns = undefined as number | undefined, env = {} } = {}) => {
     let out = '';
     let err = '';
     const asked: string[] = [];
     const code = await main(args, {
       env: { ...s.env, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: answer }]), ...env }, cwd: repo,
-      terminal, columns, ask: async (q) => (asked.push(q), reply), out: (x) => (out += x), err: (x) => (err += x),
+      terminal, columns, out: (x) => (out += x), err: (x) => (err += x),
+      ask: async (q) => {
+        asked.push(q);
+        if (reply instanceof Error) throw reply;
+        return reply;
+      },
     });
     return { code, out, err, asked };
   };
@@ -153,4 +159,21 @@ test('colour only when stdout is a terminal and NO_COLOR is not set', async () =
   assert.match((await heeded([], { columns: 100 })).out, /\x1b\[31m✗/);
   assert.doesNotMatch((await heeded([], { columns: 100, env: { NO_COLOR: '1' } })).out, /\x1b\[/);
   assert.doesNotMatch((await heeded([])).out, /\x1b\[/);
+});
+
+test('the question left with ctrl-c or ctrl-d: no, and the report still prints', async () => {
+  const { heeded, calls } = setup();
+  const { code, out } = await heeded([], { terminal: true, reply: new Error('Aborted with Ctrl+C') });
+  assert.equal(code, 0);
+  assert.equal(calls(), 0);
+  assert.match(out, /1 section not read yet/);
+});
+
+test('an unexpected error: one line, exit 1, no stack trace', async () => {
+  const { s, heeded } = setup();
+  const notAFolder = join(s.root, 'cache-file');
+  writeFileSync(notAFolder, '');
+  const { code, err } = await heeded([], { terminal: true, reply: 'y', env: { XDG_CACHE_HOME: notAFolder } });
+  assert.equal(code, 1);
+  assert.match(err, /\nheeded: [^\n]+\n$/);
 });

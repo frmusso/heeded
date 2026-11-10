@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { type Event, read } from '../src/claude-code.ts';
@@ -227,4 +227,12 @@ test('an empty file: no events, not unrecognized', async () => {
   writeFileSync(file, '');
   assert.deepEqual(await events(s.configDir, repo), []);
   assert.deepEqual(await unrecognized(s.configDir, repo), []);
+});
+
+test('a transcript that cannot be read is skipped, the others read', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  chmodSync(writeSession(s.configDir, repo, 'a', [user('hi')]), 0o000);
+  writeSession(s.configDir, repo, 'b', [user('hi')]);
+  assert.deepEqual(await events(s.configDir, repo), [{ kind: 'transcript', session: 'b', agent: null }]);
 });

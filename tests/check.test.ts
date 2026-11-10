@@ -59,11 +59,13 @@ test("a pattern that doesn't compile is refused, with the pattern", () => {
   assert.equal(compile({ ...gitAdd, when: { tool: '[Bash' } }), "regex doesn't compile: [Bash");
 });
 
-test('a pattern that repeats a quantified group is refused: it can take exponential time', () => {
-  for (const p of ['(a+)+', '(\\w+\\s?)*', '(x{2,})+']) {
-    assert.equal(compile({ ...gitAdd, broken: { value: p } }), `regex repeats a quantified group: ${p}`);
+test('a repeated group holding a quantifier or an alternation is refused: it can take exponential time', () => {
+  for (const p of ['(a+)+', '(\\w+\\s?)*', '(x{2,})+', '((a+))+$', '(a|a)+$', '(?:(b)*c)+']) {
+    assert.equal(compile({ ...gitAdd, broken: { value: p } }), `regex may take exponential time: ${p}`);
   }
-  for (const p of ['(?:ab)+', '\\(a+\\)+', '--force\\b|\\-f\\b']) assert.equal(typeof compile({ ...gitAdd, broken: { value: p } }), 'object', p);
+  for (const p of ['(?:ab)+', '\\(a+\\)+', '--force\\b|\\-f\\b', '([+-]\\d)+', '(-A|--all)', '[(+]+']) {
+    assert.equal(typeof compile({ ...gitAdd, broken: { value: p } }), 'object', p);
+  }
 });
 
 test('a check nothing can break is refused', () => {

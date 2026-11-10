@@ -13,6 +13,7 @@ const secrets: [string, string][] = [
   ['a Slack token', 'xo' + 'xb-1234567890-abcdefghij'],
   ['32 hex digits', 'a3f9' + 'c2e17b4d0f8a6e5c3b2a1d0f9e8c7b6a'],
   ['a base64 run of 40+ mixing digits and cases', 'dGhpc0lzQVNlY3JldEJsb2JXaXRoMTIzNDU2Nzg5MEFCQ0RFRg=='],
+  ['a base64 run holding slashes', 'q8Zr2LmN0pX4vT7wY1aB3cD5eF6gH9jK/L2mN4pQ6rS8tU0vW2xY4zA6bC8dE0'],
 ];
 
 for (const [what, secret] of secrets) {
@@ -23,6 +24,8 @@ for (const [what, secret] of secrets) {
 
 for (const text of [
   '/Users/someone/Documents/repos/heeded/src/claude-code.ts',
+  'git add /Users/someone/Documents/repos/project2/src/components/Button2.tsx',
+  'see https://github.com/someone/app/blob/main/src/Report2View/Totals3Panel.ts',
   'Run the tests before you commit, one file at a time.',
   'fixed in 8c0e8fab',
   'abcdefghijklmnopqrstuvwxyzabcdefghijklmn',

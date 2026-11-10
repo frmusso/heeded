@@ -78,7 +78,7 @@ test('a name is cut to 40 characters', () => {
 
 test('a tool rule whose pattern is refused is demoted, with the reason', () => {
   assert.equal(verify({ ...gitAdd, check: { ...gitAdd.check, broken: { value: '(a+)+' } } }, section)!.demoted,
-    'regex repeats a quantified group: (a+)+');
+    'regex may take exponential time: (a+)+');
   assert.equal(verify({ ...gitAdd, check: undefined }, section)!.demoted, 'no broken pattern');
   assert.equal(verify(gitAdd, section)!.demoted, undefined);
 });
@@ -132,4 +132,10 @@ test("a file's rules: its cached sections give rules, the others are missing; th
   assert.deepEqual(a, { rules: [verify(gitAdd, section)], missing: [other] });
   assert.equal(of({ path: '/b/CLAUDE.md', type: 'Project', content }), a);
   assert.deepEqual(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), { rules: [], missing: [] });
+});
+
+test('a quote is checked against the text the model saw: with its secrets redacted', () => {
+  const [withKey] = sections(`- never print the token gh${'p_'}Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56Qr78 in a reply`);
+  const raw = { quote: 'never print the token … in a reply', name: 'never print the token', kind: 'judgment', trigger: 'replying' };
+  assert.equal(verify(raw, withKey)?.quote, 'never print the token … in a reply');
 });
