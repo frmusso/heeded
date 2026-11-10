@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { language } from '../src/check.ts';
 import { commands } from '../src/shell.ts';
 
 const does = (line: string) => commands(line).map((c) => c.does);
@@ -91,4 +92,18 @@ test('shell syntax before a command is not part of what it does', () => {
   assert.deepEqual(does('if git push -f; then echo ok; fi'), ['git push -f', 'echo ok', 'fi']);
   assert.deepEqual(does('{ git push -f; }; ! git push -f'), ['git push -f', '}', 'git push -f']);
   assert.deepEqual(does('for x in a; do npm i; done'), ['for x in a', 'npm i', 'done']);
+});
+
+test('more heredoc and redirection forms: <<\\EOF, a commented-out heredoc, >|', () => {
+  assert.deepEqual(commands('cat <<\\EOF > notes.md\nnever rm -rf /\nEOF').map((c) => [c.does, c.carries]),
+    [['cat <<EOF > notes.md', 'never rm -rf /']]);
+  assert.deepEqual(does('# cat <<EOF\nls\nEOF'), ['ls', 'EOF']);
+  assert.deepEqual(does('echo x >| f && ls'), ['echo x >| f', 'ls']);
+});
+
+test('pathological lines stay fast', () => {
+  const start = performance.now();
+  commands('cat <<A\n'.repeat(20_000));
+  language(`${'\n'.repeat(80_000)}ok`);
+  assert.ok(performance.now() - start < 1000, `${performance.now() - start} ms`);
 });

@@ -42,7 +42,7 @@ for (const [code, words] of Object.entries(STOPWORDS)) {
  * else's words), URLs and paths are removed, or no clear winner (at least 5 stopwords, twice the runner-up's).
  */
 export function language(text: string): string | null {
-  const prose = text.replace(/(```|~~~)[\s\S]*?(\1|$)/g, ' ').replace(/^\s*>.*$/gm, ' ').replace(/`[^`\n]*`/g, ' ')
+  const prose = text.replace(/(```|~~~)[\s\S]*?(\1|$)/g, ' ').replace(/^[ \t]*>.*$/gm, ' ').replace(/`[^`\n]*`/g, ' ')
     .replace(/\S*[/\\]\S*/g, ' ');
   const words = prose.toLowerCase().match(/\p{L}+/gu) ?? [];
   if (words.length < 20) return null;
@@ -152,10 +152,15 @@ export function verdict(c: Compiled, tool: string, input: Record<string, unknown
   return judge(c, tool, input).verdict;
 }
 
-/** What broke the rule, as written: the simple command, the field's value, or the tool when the check has no field. */
+/**
+ * What broke the rule, as written: the simple command (followed by what it carries, when the check reads that and the
+ * command as written doesn't show it: a heredoc's body), the field's value, or the tool when the check has no field.
+ */
 export function culprit(c: Compiled, tool: string, input: Record<string, unknown>): string {
+  const by = judge(c, tool, input).by;
+  if (by) return (c.when.data || c.broken.data) && !by.text.includes(by.carries) ? `${by.text} ${by.carries}` : by.text;
   const value = c.field === undefined ? undefined : input[c.field];
-  return judge(c, tool, input).by?.text ?? (typeof value === 'string' ? value : tool);
+  return typeof value === 'string' ? value : tool;
 }
 
 interface Count { applied: number; broken: number }

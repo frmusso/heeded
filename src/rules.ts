@@ -275,7 +275,8 @@ A "language" rule has check: { "language": "<two-letter ISO 639-1 code>" }.
 
 A "tool" rule has a check over one call: its tool name and one top-level string field of its input.
 - Claude Code tools: Bash (field "command"), Edit (file_path, old_string, new_string), Write (file_path, content),
-  Read (file_path); MCP tools are named mcp__<server>__<tool>.
+  Read (file_path); MCP tools are named mcp__<server>__<tool>. A file_path is absolute: match a folder in it
+  (/vendor/) or its end (\.lock$), not its start.
 - field: the input field matched; left out to match on the tool name alone.
 - A "command" is read the way a shell reads it, one simple command at a time (split on &&, ||, ;, |, & and line
   breaks). "value" sees what a simple command does: its words, with quoted text emptied ('' and "" stay) and heredoc
@@ -363,18 +364,22 @@ export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheD
       errors.push(`claude: ${firstLine(String(out.result ?? ''))}`);
       continue;
     }
-    // Every section must be answered: one left out would be cached as holding no rule, and never read again.
     const answered = out?.structured_output?.sections;
-    const byId = new Map(Array.isArray(answered) ? answered.map((a) => [a?.id, a?.rules]) : []);
-    if (!batch.every((_, i) => Array.isArray(byId.get(String(i + 1))))) {
+    if (!Array.isArray(answered) || !answered.every((a) => typeof a?.id === 'string' && Array.isArray(a.rules))) {
       errors.push("claude's answer didn't match the schema");
       continue;
     }
+    // A section left out of the answer is not cached as holding no rule: it is asked about again.
+    const byId = new Map(answered.map((a) => [a?.id, a?.rules]));
+    let left = 0;
     batch.forEach((group, i) => {
-      save(cacheDir, group[0].section.hash, byId.get(String(i + 1)));
+      const rules = byId.get(String(i + 1));
+      if (!Array.isArray(rules)) return void left++;
+      save(cacheDir, group[0].section.hash, rules);
       for (const p of group) remember(cacheDir, p.identity, p.section.hash, p.at);
     });
-    read += batch.length;
+    if (left) errors.push(`claude's answer left out ${left} of ${batch.length} sections: they will be asked about again`);
+    read += batch.length - left;
   }
   return { read, tokens, errors };
 }

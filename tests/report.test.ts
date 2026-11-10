@@ -173,3 +173,10 @@ test('heeded rules with sections not read yet says so', () => {
   assert.ok(rules({ ...found, notRead: 2 }, { color: false, home: '/home/someone' })
     .endsWith(`${listed}\n  2 sections not read yet: the rules in them aren't checked\n`));
 });
+
+test('heeded rules shows what a command carries is checked for', () => {
+  const commit = r('no co-authors in commits', 'kept', 2, 0, { files: [local],
+    check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+commit\\b', data: '\\S' }, broken: { data: 'Co-Authored-By' } } });
+  assert.match(rules({ ...found, rules: [commit] }, { color: false, home: '/home/someone' }),
+    /no co-authors in commits {2}Bash command {2}when \\bgit\\s\+commit\\b {2}when data \\S {2}broken data Co-Authored-By\n/);
+});

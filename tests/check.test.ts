@@ -72,6 +72,8 @@ test('what a command carries is checked with data patterns: a commit message, in
   assert.equal(bash(`git commit -m "$(cat <<'EOF'\nfix: x\n\nCo-Authored-By: Claude\nEOF\n)"`), 'broken');
   assert.equal(bash('git commit -m "fix: x"'), 'kept');
   assert.equal(bash('echo "Co-Authored-By: Claude"'), 'none');
+  assert.equal(culprit(coauthor, 'Bash', { command: `git commit -m "$(cat <<'EOF'\nfix: x\n\nCo-Authored-By: Claude\nEOF\n)"` }),
+    'git commit -m "$(cat <<EOF\n)" fix: x\n\nCo-Authored-By: Claude');
   assert.equal(compile({ field: 'command', broken: { data: '(a+)+' } }), 'regex may take exponential time: (a+)+');
 });
 

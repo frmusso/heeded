@@ -104,12 +104,13 @@ test('a secret in a heading above the section never reaches claude either', asyn
   assert.match(calls()[0].stdin, /path="deploy with …"/);
 });
 
-test('an answer that leaves a section out: an error, nothing read for its batch', async () => {
+test('an answer that leaves a section out: the ones answered are kept, the one left out is asked about again', async () => {
   const rule = { quote: 'q', name: 'n', kind: 'judgment', trigger: 't' };
   const { s, env } = claude([{ stdout: answer([{ id: 'section-1', rules: [rule] }, { id: '2', rules: [] }]) }]);
   const result = await extract(pending(section('a', 'ha'), section('b', 'hb')), env, s.cacheDir);
-  assert.deepEqual(result.errors, ["claude's answer didn't match the schema"]);
-  assert.deepEqual([load(s.cacheDir, 'ha'), load(s.cacheDir, 'hb')], [null, null]);
+  assert.deepEqual(result.errors, ["claude's answer left out 1 of 2 sections: they will be asked about again"]);
+  assert.equal(result.read, 1);
+  assert.deepEqual([load(s.cacheDir, 'ha'), load(s.cacheDir, 'hb')], [null, []]);
 });
 
 test('a failed call says what claude said: the first line of its error, wherever it wrote it', async () => {

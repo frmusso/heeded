@@ -69,13 +69,24 @@ function heredocs(line: string): { text: string; bodies: { at: number; body: str
   const lines = line.replace(/\r\n?/g, '\n').split('\n');
   const kept: string[] = [];
   const bodies: { at: number; body: string }[] = [];
+  // A closing line not found from some line on is not found from any later one: each is looked for once.
+  const missing = new Map<string, number>();
+  const closing = (word: string, tabs: boolean, from: number) => {
+    const key = `${tabs}${word}`;
+    if ((missing.get(key) ?? Infinity) <= from) return -1;
+    for (let k = from; k < lines.length; k++) if ((tabs ? lines[k].replace(/^\t+/, '') : lines[k]) === word) return k;
+    missing.set(key, from);
+    return -1;
+  };
   let offset = 0;
   for (let i = 0; i < lines.length; i++) {
     let next = i + 1;
     let line = '';
     let from = 0;
-    for (const m of lines[i].matchAll(/(?<!<)<<(?!<)(-?)\s*(['"]?)([\w.-]+)\2/g)) {
-      const end = lines.findIndex((l, k) => k >= next && (m[1] ? l.replace(/^\t+/, '') : l) === m[3]);
+    // `\EOF` is a heredoc like `'EOF'`; a line that is a comment opens none.
+    const markers = /^\s*#/.test(lines[i]) ? [] : lines[i].matchAll(/(?<!<)<<(?!<)(-?)\s*\\?(['"]?)([\w.-]+)\2/g);
+    for (const m of markers) {
+      const end = closing(m[3], m[1] === '-', next);
       if (end < 0) continue;
       // The marker is kept without its quotes: they only say how the body is expanded.
       line += lines[i].slice(from, m.index);
@@ -152,7 +163,8 @@ export function commands(raw: string): Simple[] {
     } else if (two === '&&' || two === '||' || two === '|&') {
       close(i, i + 2);
       i += 2;
-    } else if (c === ';' || c === '|' || c === '\n' || (c === '&' && !/[<>]/.test(line[i - 1] ?? '') && line[i + 1] !== '>')) {
+    } else if (c === ';' || c === '\n' || (c === '|' && line[i - 1] !== '>')
+      || (c === '&' && !/[<>]/.test(line[i - 1] ?? '') && line[i + 1] !== '>')) {
       close(i, i + 1);
       i++;
     } else {

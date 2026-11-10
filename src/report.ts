@@ -110,8 +110,10 @@ function how(x: RuleData): string {
   return [
     `${tool === undefined ? 'any tool' : /^\^\w+\$$/.test(tool) ? tool.slice(1, -1) : `tool ${tool}`}${c.field ? ` ${c.field}` : ''}`,
     c.when?.value !== undefined && `when ${c.when.value}`,
+    c.when?.data !== undefined && `when data ${c.when.data}`,
     c.broken?.tool !== undefined && `broken tool ${c.broken.tool}`,
     c.broken?.value !== undefined && `broken ${c.broken.value}`,
+    c.broken?.data !== undefined && `broken data ${c.broken.data}`,
     c.ignoreCase && 'ignoring case',
   ].filter(Boolean).join('  ');
 }

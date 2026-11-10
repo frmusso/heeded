@@ -73,7 +73,7 @@ needs node 22 or later and claude code. reads `CLAUDE_CONFIG_DIR`, else `~/.clau
 local and read-only on your files. the only thing that leaves your machine is the text of new instruction sections,
 secrets redacted, through your own `claude`. no telemetry.
 
-> **status:** v1, not published yet. a judge for the rules a plain check can't decide comes next.
+> **status:** v1.1, not published yet. a judge for the rules a plain check can't decide comes next.
 
 ## license
 
