@@ -285,10 +285,16 @@ test('failures as in the extraction: no claude, an exit code, an error answer, a
 // What judging costs, and what a run judges within its budget.
 const twenty = judged('never commit for me!');
 
-test('the estimate: ~4.4k tokens a call, the text read once, ~50 tokens a verdict', () => {
-  assert.deepEqual(estimate([kase(twenty, 'e'.repeat(10_000))]), { calls: 1, tokens: 6955 });
-  const three = [1, 2, 3].map(() => kase(twenty, 'e'.repeat(15_000)));
-  assert.deepEqual(estimate(three), { calls: 2, tokens: 20_215 });
+test('the estimate: the prompts judging sends, ~1.8 characters a token, ~1.2k tokens a call, ~210 a verdict', async () => {
+  const { s, env, calls } = claude([{ stdout: answer([]) }]);
+  const shared = { ...twenty, context: 'x'.repeat(3000) }; // not hex: it would read as a secret
+  const list = [kase(shared, 'e'.repeat(10_000)), kase(shared, 'e'.repeat(10_000)), kase(judged('another rule'), 'f'.repeat(30_000))];
+  await judge(list, env, s.cacheDir);
+  const sent = calls().reduce((n, c) => n + c.stdin.length, 0);
+  assert.equal(calls().length, 2);
+  assert.deepEqual(estimate(list), { calls: 2, tokens: 1200 * 2 + Math.ceil(sent / 1.8) + 210 * 3 });
+  // A rule is read once a call: the words around it don't count again for its second case.
+  assert.equal(calls()[0].stdin.split('x'.repeat(3000)).length, 2);
 });
 
 const timed = (rule: Rule, day: number): Case => ({ ...kase(rule, 'you: x\ncall Bash: y'), at: `2026-11-0${day}T10:00:00Z` });

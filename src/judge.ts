@@ -242,12 +242,31 @@ const home = (path: string, dir: string | undefined) => (dir && path.startsWith(
 /** The tokens a run may spend judging, the sections it reads aside. */
 export const BUDGET = 150_000;
 
-/** What judging `cases` would cost: each call carries ~4.4k tokens of prompt and schema, the text is read once, and each
- * verdict is answered in ~50 tokens. The real count is shown after. */
+/** The calls judging `cases` takes: each batch's prompt, each rule in it once with where it is written and the words
+ * around it, then its cases. */
+function prompts(cases: Case[], dir: string | undefined): { batch: Case[]; prompt: string }[] {
+  return batches(cases, size, BATCH).map((batch) => {
+    const rules = new Map<string, number>(); // rule id → its number in the prompt
+    const blocks: string[] = [];
+    for (const c of batch) {
+      if (rules.has(c.rule.id)) continue;
+      rules.set(c.rule.id, rules.size + 1);
+      const context = c.rule.context ? `<context>${redact(c.rule.context)}</context>\n` : '';
+      const from = [c.rule.file && home(c.rule.file, dir), c.rule.heading].filter(Boolean).join(' › ');
+      blocks.push(`<rule id="${rules.size}" from="${redact(from).replaceAll('"', "'")}">\n${redact(c.rule.quote)}\n${context}</rule>`);
+    }
+    batch.forEach((c, i) => blocks.push(`<case id="${i + 1}" rule="${rules.get(c.rule.id)}">\n${c.excerpt}\n</case>`));
+    return { batch, prompt: `${JUDGE_PROMPT}\n${blocks.join('\n\n')}\n` };
+  });
+}
+
+/** What judging `cases` would cost: the prompts it would send, ~1.8 characters a token (paths, code and quoted
+ * commands read densely), ~1.2k tokens a call of claude's own, ~210 a verdict. Measured on real calls; the real count
+ * is shown after. */
 export function estimate(cases: Case[]): { calls: number; tokens: number } {
-  const calls = batches(cases, size, BATCH).length;
-  const chars = cases.reduce((n, c) => n + size(c), 0);
-  return { calls, tokens: 4400 * calls + Math.ceil(chars / 4) + 50 * cases.length };
+  const all = prompts(cases, undefined);
+  const chars = all.reduce((n, p) => n + p.prompt.length, 0);
+  return { calls: all.length, tokens: 1200 * all.length + Math.ceil(chars / 1.8) + 210 * cases.length };
 }
 
 /**
@@ -282,18 +301,8 @@ export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: str
   const errors: string[] = [];
   let judged = 0;
   let tokens = 0;
-  for (const batch of batches(cases, size, BATCH)) {
-    const rules = new Map<string, number>(); // rule id → its number in the prompt
-    const blocks: string[] = [];
-    for (const c of batch) {
-      if (rules.has(c.rule.id)) continue;
-      rules.set(c.rule.id, rules.size + 1);
-      const context = c.rule.context ? `<context>${redact(c.rule.context)}</context>\n` : '';
-      const from = [c.rule.file && home(c.rule.file, env.HOME), c.rule.heading].filter(Boolean).join(' › ');
-      blocks.push(`<rule id="${rules.size}" from="${redact(from).replaceAll('"', "'")}">\n${redact(c.rule.quote)}\n${context}</rule>`);
-    }
-    batch.forEach((c, i) => blocks.push(`<case id="${i + 1}" rule="${rules.get(c.rule.id)}">\n${c.excerpt}\n</case>`));
-    const run = await ask(model, JUDGE_SCHEMA, `${JUDGE_PROMPT}\n${blocks.join('\n\n')}\n`, env);
+  for (const { batch, prompt } of prompts(cases, env.HOME)) {
+    const run = await ask(model, JUDGE_SCHEMA, prompt, env);
     tokens += run.tokens;
     if (run.error) {
       errors.push(run.error);
