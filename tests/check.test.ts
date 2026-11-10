@@ -291,7 +291,7 @@ test("each rule's status, in the report's order: broken by kept share, kept, nev
     bash('git add -A')], { A: [judge, demoted, kill, rm, push, addAll] });
   assert.deepEqual(data.rules.map((r) => [r.name, r.status, r.reason]), [
     ['never git add -A', 'broken', undefined], ['never force-push', 'broken', undefined], ['never rm -rf', 'kept', undefined],
-    ['never kill billing', 'never-applied', undefined], ['failing test first', 'judgment', undefined],
+    ['never kill billing', 'never-applied', undefined], ['failing test first', 'judgment', 'no case to judge it on'],
     ['never sudo', 'demoted', 'failed its examples: breaks "please sudo"'],
   ]);
   assert.equal(data.rules[3].tokens, 5);
@@ -507,4 +507,5 @@ test('a judgment rule without cases is never a case', () => {
   const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m x'), reply(EN)], { A: [vague] }, {}, unjudged);
   assert.deepEqual(c.waiting().judgment, []);
   assert.deepEqual(tally(c.result(), vague), { status: 'judgment', applied: 0, broken: 0, judged: 0, toConfirm: 0 });
+  assert.equal(c.result().rules[0].reason, 'no case to judge it on');
 });

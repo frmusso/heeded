@@ -133,6 +133,10 @@ test('not a terminal: nothing read or judged, the report says what waits', async
   assert.equal(calls(), 0);
   assert.equal(doc.toJudge, 1);
   assert.deepEqual([doc.rules[0].broken, doc.rules[0].toConfirm], [0, 1]);
+  const { out } = await heeded([]);
+  assert.match(out, /\n {2}\? never git add -A {2}1 to confirm\n/);
+  assert.match(out, /\n {2}1 case waiting for the judge\n/);
+  assert.equal(calls(), 0);
 });
 
 test('not a terminal: new sections are never read, and the report says so', async () => {

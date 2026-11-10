@@ -427,7 +427,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         files: [...files],
         status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
           : all.broken ? 'broken' : all.applied ? 'kept' : unjudged ? 'to-confirm' : 'never-applied',
-        ...(rule.demoted ? { reason: rule.demoted } : {}),
+        ...(rule.demoted || rule.noCases ? { reason: rule.demoted ?? rule.noCases } : {}),
         ...(rule.check ? { check: rule.check } : {}),
         applied: all.applied,
         broken: all.broken,

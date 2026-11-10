@@ -6,7 +6,7 @@ export interface Report extends Data { folder: string; configDir: string; unreco
 
 export function json(r: Report): string {
   const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, files, rules, byDepth } = r;
-  return `${JSON.stringify({ heeded: 1, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, files,
+  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, files,
     rules, byDepth }, null, 2)}\n`;
 }
 
@@ -46,7 +46,7 @@ export function text(r: Report, o: TextOptions): string {
   const home = (path: string) => tilde(path, o.home);
   const color = (code: number, off: number, s: string) => paint(o.color, code, off, s);
   // Only rules and evidence are cut to the width: a folder's path is never cut.
-  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {2})([✗✓○])/gm, (_, indent, mark) =>
+  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {2})([✗✓○?·])/gm, (_, indent, mark) =>
     indent + (mark === '✗' ? color(31, 39, mark) : mark === '✓' ? color(32, 39, mark) : color(2, 22, mark)))
     .replace(/^( {6}[a-z]{3} \d.*)$/gm, (line) => color(2, 22, line));
   const unrecognized = r.unrecognized.length
@@ -57,30 +57,36 @@ export function text(r: Report, o: TextOptions): string {
   const header = `  ${home(r.folder)} · ${plural(r.sessions, 'session')}, ${plural(r.subagents, 'subagent')}${span}`;
   if (!r.files.length) return out([[header, '  no instructions recorded', ...unrecognized]]);
 
-  const checked = r.rules.filter((x) => ['broken', 'kept', 'never-applied'].includes(x.status));
-  const judged = r.rules.filter((x) => x.status === 'judgment').length;
+  const checked = r.rules.filter((x) => ['broken', 'kept', 'to-confirm', 'never-applied'].includes(x.status));
+  const judgment = r.rules.filter((x) => x.status === 'judgment');
   const demoted = r.rules.filter((x) => x.status === 'demoted').length;
   const counts = `  ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')} · ${thousands(checked.length)} checked`
-    + ` · ${thousands(judged)} need a judge${demoted ? ` · ${thousands(demoted)} demoted` : ''}`;
+    + ` · ${thousands(judgment.length)} need a judge${demoted ? ` · ${thousands(demoted)} demoted` : ''}`;
 
-  // The rules' cells, the name column narrowed until the widest row fits.
-  const rows = checked.map((x) => [x.name, ...(x.status === 'never-applied'
+  // The rules' cells, the name column narrowed until the widest row fits: the checked rules, then the judgment rules
+  // judged on a sample, whose share is of their cases judged.
+  const shown = [...checked, ...judgment.filter((x) => x.applied)];
+  const rows = shown.map((x) => [x.name, ...(x.status === 'never-applied'
     ? ['never applied', `~${thousands(x.tokens)} tokens every session`]
-    : [`kept ${kept(x.applied, x.broken)} of ${thousands(x.applied)}`,
-      ...(x.broken ? [`broken ${thousands(x.broken)}×`, `last ${ago(x.evidence[0].at, o.now)}`] : [])])]);
+    : x.status === 'to-confirm' ? []
+    : [`kept ${kept(x.applied, x.broken)} of ${thousands(x.applied)}${x.status === 'judgment' ? ' judged' : ''}`,
+      ...(x.broken ? [`broken ${thousands(x.broken)}×`, `last ${ago(x.evidence[0].at, o.now)}`] : [])]),
+  ...(x.toConfirm ? [`${thousands(x.toConfirm)} to confirm`] : [])]);
   const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]));
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 4)) > o.columns) width--;
-  const mark = { broken: '✗', kept: '✓', 'never-applied': '○' } as Record<string, string>;
-  const lines = laid(width).map((l, i) => cut(`  ${mark[checked[i].status]} ${l}`, o.columns));
+  const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', 'never-applied': '○', judgment: '·' } as Record<string, string>;
+  const lines = laid(width).map((l, i) => cut(`  ${mark[shown[i].status]} ${l}`, o.columns));
   const rules: string[] = [];
-  checked.forEach((x, i) => {
+  shown.forEach((x, i) => {
     rules.push(lines[i]);
     if (x.afterCompaction.applied >= 20) {
       rules.push(`      after compaction kept ${kept(x.afterCompaction.applied, x.afterCompaction.broken)} of ${thousands(x.afterCompaction.applied)}`);
     }
+    // A judgment rule's evidence is the judge's words; a tool rule's, what in the call broke it.
     for (const e of x.broken ? x.evidence.slice(0, 3) : []) {
-      rules.push(cut(`      ${date(e.at).padEnd(6)}  ${e.session.slice(0, 8)}  ${e.text}`, o.columns));
+      const what = x.status === 'judgment' ? e.quote ?? e.text : e.text;
+      rules.push(cut(`      ${date(e.at).padEnd(6)}  ${e.session.slice(0, 8)}  ${what}`, o.columns));
     }
   });
 
@@ -90,22 +96,29 @@ export function text(r: Report, o: TextOptions): string {
     `  ${' '.repeat(21)}${r.byDepth.map((b, i) => `   ${(b.applied >= 20 ? kept(b.applied, b.broken) : '–').padStart(labels[i].length)}`).join('')}`,
   ] : [];
 
-  const notChecked = [judged && `${plural(judged, 'rule')} ${judged === 1 ? 'needs' : 'need'} a judge`, demoted && `${thousands(demoted)} demoted`]
+  const unjudged = judgment.filter((x) => !x.applied).length;
+  const notChecked = [unjudged && `${plural(unjudged, 'rule')} not judged yet`, demoted && `${thousands(demoted)} demoted`]
     .filter(Boolean).join(', ');
   const end = [
-    ...(notChecked ? [`  ${notChecked}, not checked yet: heeded rules`] : []),
+    ...(notChecked ? [`  ${notChecked}: heeded rules`] : []),
     ...(r.notRead ? [notRead(r.notRead)] : []),
+    ...(r.toJudge ? [`  ${plural(r.toJudge, 'case')} waiting for the judge`] : []),
     ...unrecognized,
   ];
   return out([[header, counts], rules, depth, end]);
 }
 
-/** How a rule is checked, in words: a tool check shows every pattern, whole. */
+/** How a rule is checked, in words: a tool check shows every pattern, whole; a judgment rule, the cases it is judged on. */
 function how(x: RuleData): string {
-  if (x.status === 'judgment') return 'needs a judge';
+  if (x.status === 'judgment') {
+    return x.reason ? `needs a judge, no cases: ${x.reason}` : x.check?.reply ? 'judged on replies' : `judged on ${patterns(x.check!)}`;
+  }
   if (x.status === 'demoted') return x.reason!;
-  const c = x.check!;
-  if (c.language) return `language ${c.language}`;
+  if (x.check!.language) return `language ${x.check!.language}`;
+  return patterns(x.check!);
+}
+
+function patterns(c: NonNullable<RuleData['check']>): string {
   const tool = c.when?.tool;
   return [
     `${tool === undefined ? 'any tool' : /^\^\w+\$$/.test(tool) ? tool.slice(1, -1) : `tool ${tool}`}${c.field ? ` ${c.field}` : ''}`,
