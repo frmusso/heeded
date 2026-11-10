@@ -19,6 +19,12 @@ export const summary = (): Line => ({
   type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous one.' },
 });
 export const user = (text: string): Line => ({ type: 'user', message: { role: 'user', content: text } });
+/** Text Claude Code adds to the conversation itself, a caveat or a command's output: never the user's words. */
+export const meta = (text: string): Line => ({ type: 'user', isMeta: true, message: { role: 'user', content: text } });
+/** A tool call's result: Claude Code writes it as a user line, the call's id first in its block. */
+export const answer = (toolUseId: string, content: string | { type: 'text'; text: string }[]): Line => ({
+  type: 'user', message: { role: 'user', content: [{ tool_use_id: toolUseId, type: 'tool_result', content }] }, toolUseResult: {},
+});
 interface Tool { id: string; name: string; input: Record<string, unknown> }
 
 /** One line of an assistant message: Claude Code writes each content block of a message on a line of its own. */

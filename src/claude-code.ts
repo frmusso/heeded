@@ -10,7 +10,10 @@ export type Event =
   | { kind: 'instructions'; files: InstructionFile[]; replace: boolean }
   | { kind: 'compaction'; trigger: string; preTokens: number }
   | { kind: 'call'; id: string; tool: string; input: Record<string, unknown>; at: string; depth: number; compactions: number }
-  | { kind: 'reply'; id: string; text: string; at: string; depth: number; compactions: number };
+  | { kind: 'reply'; id: string; text: string; at: string; depth: number; compactions: number }
+  // A prompt: by the user in a main session, answers to the agent's questions and plans included (`answer`); in a
+  // subagent's, the task the agent that started it wrote.
+  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; answer: boolean };
 type Reply = Extract<Event, { kind: 'reply' }>;
 
 /** A folder's entries by name; none when it doesn't exist. */
@@ -44,8 +47,12 @@ const isFile = (f: unknown): f is InstructionFile => typeof f === 'object' && f 
   && typeof (f as InstructionFile).path === 'string' && typeof (f as InstructionFile).type === 'string'
   && typeof (f as InstructionFile).content === 'string';
 
-/** What a transcript's earlier lines tell its later ones; `reply` is the message being written, until it ends. */
-interface State { compactions: number; replace: boolean; depth: number; replies: boolean; reply: Reply | null }
+/** What a transcript's earlier lines tell its later ones; `reply` is the message being written, until it ends; `asked`
+ * the ids of the calls whose result is the user's answer. */
+interface State { compactions: number; replace: boolean; depth: number; replies: boolean; reply: Reply | null; asked: Set<string> }
+
+/** The tools whose result is what the user answered: a choice among options, a plan approved or not. */
+const ASKING = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
 function flush(state: State, emit: (e: Event) => void) {
   if (state.reply) emit(state.reply);
@@ -54,12 +61,18 @@ function flush(state: State, emit: (e: Event) => void) {
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const tokens = (v: unknown) => (typeof v === 'number' ? v : 0);
+/** A message's text: a string, or its text blocks joined (images and the rest left out). */
+const textOf = (c: unknown) => (typeof c === 'string' ? c
+  : Array.isArray(c) ? c.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n') : '');
 
 /** The events of one line; false when it should have parsed and didn't. Only the lines heeded needs are parsed, found
- * by a substring first. */
+ * by a substring first: a tool result, the bulk of a transcript, only when it answers one of the agent's questions. */
 function onLine(line: string, state: State, out: (e: Event) => void): boolean {
+  const user = line.includes('"type":"user"');
+  const result = user ? /"tool_use_id":"([^"]*)"/.exec(line) : null;
   if (!line.includes('"type":"assistant"') && !line.includes('"type":"instructions"')
-    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"')) return true;
+    && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"')
+    && !(user && (!result || state.asked.has(result[1])))) return true;
   let o;
   try {
     o = JSON.parse(line);
@@ -89,8 +102,22 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
           state.reply = { kind: 'reply', id: m.id, text: b.text, at: o.timestamp, depth: state.depth, compactions: state.compactions };
         }
       } else if (b?.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string' && isObject(b.input)) {
+        if (ASKING.has(b.name)) state.asked.add(b.id);
         out({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions });
       }
+    }
+  } else if (o.type === 'user' && isObject(m) && !o.isMeta && !o.isCompactSummary && typeof o.timestamp === 'string'
+    && !Number.isNaN(Date.parse(o.timestamp))) {
+    const results = Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'tool_result') : [];
+    for (const b of results) {
+      const text = state.asked.has(b.tool_use_id) ? textOf(b.content) : '';
+      if (text.trim()) emit({ kind: 'prompt', text, at: o.timestamp, by: 'user', answer: true });
+    }
+    // Lines starting with a tag are Claude Code's own (a command run, a notification), as is an interruption's note.
+    const text = results.length ? '' : textOf(m.content);
+    const start = text.trimStart();
+    if (start && start[0] !== '<' && !start.startsWith('[Request interrupted')) {
+      emit({ kind: 'prompt', text, at: o.timestamp, by: state.replies ? 'user' : 'agent', answer: false });
     }
   } else if (o.type === 'attachment' && a?.type === 'instructions' && Array.isArray(a.files)) {
     // After a compaction Claude Code records every file in effect again: they replace the ones before.
@@ -126,7 +153,7 @@ async function readFile(path: string, session: string, agent: string | null, ins
   const held: Event[] = [];
   if (decided) emit({ kind: 'transcript', session, agent });
   const out = (e: Event) => (decided ? emit(e) : held.push(e));
-  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null };
+  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null, asked: new Set() };
   let total = 0;
   let bad = 0;
   let messages = false;
