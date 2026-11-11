@@ -130,6 +130,22 @@ test('a tool call: its id, tool, input and time, the context depth, the compacti
   ]);
 });
 
+test("a call on a file in claude code's own projects folder, its memory, is the agent's own", async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  const memory = join(s.configDir, 'projects', 'x', 'memory', 'notes.md');
+  const calls = [
+    { name: 'Write', input: { file_path: memory, content: 'a fact' } },
+    { name: 'Edit', input: { file_path: memory, old_string: 'a', new_string: 'b' } },
+    { name: 'Edit', input: { file_path: join(repo, 'a.ts'), old_string: 'a', new_string: 'b' } },
+    { name: 'Edit', input: { file_path: join(s.configDir, 'CLAUDE.md'), old_string: 'a', new_string: 'b' } },
+    { name: 'Bash', input: { command: `cat ${memory}` } },
+  ];
+  writeSession(s.configDir, repo, 'a', calls.map((tool, i) => assistant({ id: `m${i}`, tool: { id: `tu${i}`, ...tool } })));
+  const own = (await events(s.configDir, repo)).flatMap((e) => (e.kind === 'call' ? [e.own === true] : []));
+  assert.deepEqual(own, [true, true, false, false, false]);
+});
+
 test('a line without usage keeps the depth last seen', async () => {
   const s = sandbox();
   const repo = join(s.root, 'repo');

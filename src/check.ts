@@ -437,7 +437,8 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
       else record(t, e, v === 'broken', () => evidence(e, null, detected ?? null));
     }
     if (e.kind === 'reply') for (const t of replying) decide(t, e);
-    else {
+    // The agent's own files (its memory) are no case of the user's rules about their project.
+    else if (!e.own) {
       for (const f of finders) {
         if (f.tool && !f.tool.test(e.tool)) continue;
         const all = views(f.field, e.input);

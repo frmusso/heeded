@@ -9,7 +9,9 @@ export type Event =
   | { kind: 'transcript'; session: string; agent: string | null }
   | { kind: 'instructions'; files: InstructionFile[]; replace: boolean }
   | { kind: 'compaction'; trigger: string; preTokens: number }
-  | { kind: 'call'; id: string; tool: string; input: Record<string, unknown>; at: string; depth: number; compactions: number }
+  // A call is `own` when it works on the agent's own files (its memory), never the user's project.
+  | { kind: 'call'; id: string; tool: string; input: Record<string, unknown>; at: string; depth: number; compactions: number;
+    own?: true }
   | { kind: 'reply'; id: string; text: string; at: string; depth: number; compactions: number }
   // A prompt: by the user in a main session; in a subagent's, the task the agent that started it wrote. `starts` when it
   // starts a turn; the user's words given mid-turn don't: an answer to the agent's question or plan, a slash command, a
@@ -50,10 +52,10 @@ const isFile = (f: unknown): f is InstructionFile => typeof f === 'object' && f 
 
 /** What a transcript's earlier lines tell its later ones; `reply` is what the agent is saying, until it calls a tool or
  * another message starts; `parts`, how many replies of message `of` were already out; `asked`, the ids of the calls
- * whose result is the user's answer. */
+ * whose result is the user's answer; `own`, the folder of Claude Code's own files (its memory, its transcripts). */
 interface State {
   compactions: number; replace: boolean; depth: number; replies: boolean; reply: Reply | null; of: string; parts: number;
-  asked: Set<string>;
+  asked: Set<string>; own: string;
 }
 
 /** The tools whose result is what the user answered: a choice among options, a plan approved or not. */
@@ -123,7 +125,9 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
           flush(state, out);
           if (state.of === m.id) state.parts++;
         }
-        out({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions });
+        const own = typeof b.input.file_path === 'string' && b.input.file_path.startsWith(state.own);
+        out({ kind: 'call', id: b.id, tool: b.name, input: b.input, at: o.timestamp, depth: state.depth, compactions: state.compactions,
+          ...(own ? { own } : {}) });
       }
     }
   } else if (o.type === 'user' && isObject(m) && !o.isMeta && !o.isCompactSummary && typeof o.timestamp === 'string'
@@ -181,14 +185,15 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
  * result would hide it.
  */
 async function readFile(path: string, session: string, agent: string | null, inside: ((cwd: string) => boolean) | null,
-  emit: (e: Event) => void, unrecognized: string[]): Promise<boolean> {
+  own: string, emit: (e: Event) => void, unrecognized: string[]): Promise<boolean> {
   const file = await open(path).catch(() => null);
   if (!file) return false; // deleted since it was listed, or not readable: skipped
   let decided = inside === null;
   const held: Event[] = [];
   if (decided) emit({ kind: 'transcript', session, agent });
   const out = (e: Event) => (decided ? emit(e) : held.push(e));
-  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null, of: '', parts: 0, asked: new Set() };
+  const state: State = { compactions: 0, replace: false, depth: 0, replies: agent === null, reply: null, of: '', parts: 0,
+    asked: new Set(), own };
   let total = 0;
   let bad = 0;
   let messages = false;
@@ -235,14 +240,14 @@ export async function read(configDir: string, folder: string, emit: (e: Event) =
     for (const file of await entries(project)) {
       if (!file.isFile() || !file.name.endsWith('.jsonl')) continue;
       const session = file.name.slice(0, -'.jsonl'.length);
-      if (!(await readFile(join(project, file.name), session, null, inside, emit, unrecognized))) continue;
+      if (!(await readFile(join(project, file.name), session, null, inside, `${projects}/`, emit, unrecognized))) continue;
       const subagents = join(project, session, 'subagents');
       const real = async (dir: string) => (await lstat(dir).catch(() => null))?.isDirectory();
       if (!(await real(join(project, session))) || !(await real(subagents))) continue;
       for (const sub of await entries(subagents)) {
         if (!sub.isFile() || !sub.name.startsWith('agent-') || !sub.name.endsWith('.jsonl')) continue;
-        await readFile(join(subagents, sub.name), session, sub.name.slice('agent-'.length, -'.jsonl'.length), null, emit,
-          unrecognized);
+        await readFile(join(subagents, sub.name), session, sub.name.slice('agent-'.length, -'.jsonl'.length), null,
+          `${projects}/`, emit, unrecognized);
       }
     }
   }

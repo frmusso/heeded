@@ -512,6 +512,24 @@ test('a judgment rule is judged on 8 cases first: none applies, it stops there; 
   assert.equal(adds.waiting().tool.flat().length, 12);
 });
 
+test("the agent's own call, an edit to its memory, is no case of a judgment rule; a tool rule still checks it", () => {
+  const edits = rule({ quote: 'say why in every edit', name: 'say why', kind: 'judgment', trigger: 'editing',
+    check: { field: 'file_path', when: { tool: '^(Edit|Write)$', value: '.' } },
+    keeping: [{ tool: 'Edit', value: '/r/a.ts' }] });
+  const noMd = rule({ quote: 'never write markdown files', name: 'never write markdown', kind: 'tool', trigger: 'writing',
+    check: { field: 'file_path', when: { tool: '^Write$', value: '.' }, broken: { value: '\\.md$' } },
+    breaking: [{ tool: 'Write', value: '/r/a.md' }], keeping: [{ tool: 'Write', value: '/r/a.ts' }] });
+  const memory = '/home/.claude/projects/x/memory/notes.md';
+  const write = (file_path: string, own?: true): Event => ({ kind: 'call', id: `tu${++ids}`, tool: 'Write',
+    input: { file_path, content: 'x' }, ...at(1), depth: 0, compactions: 0, ...(own ? { own } : {}) });
+  const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), write(memory, true), write('/r/a.ts')], { A: [edits, noMd] }, {},
+    unjudged);
+  const lists = c.waiting();
+  assert.deepEqual(lists.judgment.flat().map((k) => k.excerpt.split('\n').at(-1)), ['call Write: /r/a.ts writes: x']);
+  assert.ok(lists.judgment[0][0].excerpt.includes(`call Write: ${memory}`));
+  assert.deepEqual(lists.tool.flat().map((k) => k.excerpt.split('\n').at(-1)), [`call Write: ${memory} writes: x`]);
+});
+
 test('a judgment rule without cases is never a case', () => {
   const vague = rule({ quote: 'think before you act', name: 'think first', kind: 'judgment', trigger: 'always' });
   const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m x'), reply(EN)], { A: [vague] }, {}, unjudged);
