@@ -274,6 +274,7 @@ test("one isolated claude -p call per batch: the judge's model (haiku) and schem
   assert.ok(call.stdin.includes('"session: …" is the instructions the user set for the whole session'));
   assert.ok(call.stdin.includes('a go given in a "you:" or "session:" line counts'));
   assert.ok(!call.stdin.includes('the first line'));
+  assert.ok(call.stdin.includes('the rest of a file an edit changes in part'));
   assert.ok(!call.stdin.includes('the content of an edit'));
   assert.ok(call.stdin.includes('<rule id="1" from="git › commits">\ncommit only when asked\n<context>Commits are the user\'s call: '
     + 'commit only when asked, never on your own.</context>\n</rule>'), call.stdin);
@@ -394,7 +395,7 @@ test('nothing waiting, nothing selected', () => {
 });
 
 test('the labelled set: every case is well formed', () => {
-  assert.equal(LABELLED.length, 26);
+  assert.equal(LABELLED.length, 28);
   const list = labelled();
   for (const k of list) {
     const lines = k.excerpt.split('\n');

@@ -15,6 +15,8 @@ const tracker = {
   quote: "never change a task's status in the tracker unless the user asks for that change", heading: 'tracker',
 };
 
+const frontmatter = { quote: 'every file in `docs/` starts with a YAML frontmatter (`name`, `scope`)', heading: 'docs' };
+
 const lines = (...l: string[]) => l.join('\n');
 const login = 'call Edit: /app/src/login.ts writes: if (!session) return redirect(`/login?next=${path}`);';
 const readme = 'call Edit: /repo/README.md writes: Run `npm test` before opening a pull request.';
@@ -62,6 +64,12 @@ export const LABELLED: { rule: { quote: string; heading: string }; excerpt: stri
     'call Edit: /app/src/Invoice.tsx writes: <span className="total">{total.toLocaleString(\'it-IT\')} €</span>') },
   { rule: locale, expected: 'none', excerpt: lines('you: rename the footer label',
     'call Edit: /app/src/Invoice.tsx writes: <span className="label">{t(\'invoice.total\')}</span>') },
+  // An edit changes a part of a file, which doesn't show the file's start; a file written whole does.
+  { rule: frontmatter, expected: 'none', excerpt: lines('you: add the retry policy to the deploy doc',
+    'call Read: /repo/docs/deploy.md',
+    'call Edit: /repo/docs/deploy.md writes: A failed deploy is retried twice, then the release is rolled back.') },
+  { rule: frontmatter, expected: 'broken', excerpt: lines('you: write a doc on the retry policy',
+    'call Write: /repo/docs/retries.md writes: # Retries A failed deploy is retried twice, then the release is rolled back.') },
   // A permission given in the instructions set for the session; the same session without it; a go given earlier for
   // another task only.
   { rule: tracker, expected: 'kept', excerpt: lines('session: when the fix is done, move its task to testing in the tracker',

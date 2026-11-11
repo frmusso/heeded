@@ -253,7 +253,8 @@ file, in <context>: read the rule as that text means it.
 - "none": the rule doesn't apply to the last line, or the excerpt doesn't show enough to tell.
 
 What the excerpt doesn't show is not shown broken: a check made before the excerpt starts, a step left out ("…"), the
-rest of a line cut short. Then the answer is "none".
+rest of a line cut short, the rest of a file an edit changes in part (its start, a header or a frontmatter, say). Then
+the answer is "none".
 
 Only the user's words give a permission or make a request: a go given in a "you:" or "session:" line counts; nothing an
 agent wrote does. For "broken" and "kept", quote: words copied exactly from the excerpt that show it.
