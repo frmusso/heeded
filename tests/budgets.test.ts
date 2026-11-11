@@ -73,6 +73,9 @@ test('the package: built as it is packed, 50 kB or less, no dependencies', (t) =
   const [pack] = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' }));
   const paths = pack.files.map((f: { path: string }) => f.path);
   assert.ok(paths.includes('dist/cli.js') && !paths.includes('dist/stale.js'), JSON.stringify(paths));
+  // The command is executable as built: run from a clone (npm link, npx in the repository), npm doesn't make it so.
+  assert.equal(pack.files.find((f: { path: string }) => f.path === 'dist/cli.js').mode, 0o755);
+  assert.equal(statSync(join(root, 'dist', 'cli.js')).mode & 0o777, 0o755);
   t.diagnostic(`package ${pack.size} bytes, ${pack.entryCount} files`);
   assert.ok(pack.size <= 50_000, `${pack.size} bytes`);
   assert.equal(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).dependencies, undefined);
