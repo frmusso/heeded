@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ask, pool } from '../src/model.ts';
@@ -53,5 +54,15 @@ test('a claude call that takes too long is stopped: an error for its batch, not 
   const run = await ask('haiku', '{}', 'prompt', env, 300);
   assert.ok(Date.now() - start < 3000, `${Date.now() - start} ms`);
   assert.equal(run.fatal, undefined);
+  assert.match(run.error ?? '', /^claude took more than [\d.]+ minutes?: stopped$/);
+});
+
+test('a claude that forks the real one (a launcher without exec) is stopped too: the pipes it leaves open are not waited for', async () => {
+  const s = sandbox();
+  writeFileSync(join(s.bin, 'claude'), '#!/bin/sh\nsleep 8\necho done\n');
+  chmodSync(join(s.bin, 'claude'), 0o755);
+  const start = Date.now();
+  const run = await ask('haiku', '{}', 'prompt', { ...s.env, PATH: `${s.bin}:/bin:/usr/bin` }, 300);
+  assert.ok(Date.now() - start < 3000, `${Date.now() - start} ms`);
   assert.match(run.error ?? '', /^claude took more than [\d.]+ minutes?: stopped$/);
 });

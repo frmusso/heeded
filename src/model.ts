@@ -62,6 +62,10 @@ async function claude(args: string[], prompt: string, env: NodeJS.ProcessEnv, li
       const timer = setTimeout(() => {
         late = true;
         child.kill('SIGKILL');
+        // A launcher that forked the real claude leaves its pipes open past its own end: they are not waited for.
+        child.stdout.destroy();
+        child.stderr.destroy();
+        resolve({ code: null, stdout, stderr, late });
       }, limit);
       child.stdout.on('data', (d) => (stdout += d));
       child.stderr.on('data', (d) => (stderr += d));
