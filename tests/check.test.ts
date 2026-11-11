@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applies, type Check, compile, counter, culprit, type Data, language, verdict } from '../src/check.ts';
+import { applies, type Check, compile, counter, culprit, type Data, language, sequence, verdict, walk } from '../src/check.ts';
 import type { Event } from '../src/claude-code.ts';
 import type { Verdict } from '../src/judge.ts';
 import { type Rule, sections, type Version, verify } from '../src/rules.ts';
@@ -180,6 +180,65 @@ const EN = 'I checked the failing test and the problem is in the parser. It read
   + 'on large inputs. I will change it to stream the lines and run the tests again.';
 
 /** The judge, as most tests want it: every case confirmed broken. */
+// Sequence rules: a call that must come before the ones a rule is about, or follow them before the turn ends.
+const readFirst: Check = { field: 'file_path', when: { tool: '^(Edit|Write)$', value: '/shared/context/' },
+  first: { field: 'file_path', tool: '^Read$', value: 'shared/CLAUDE\\.md$' } };
+const buildAfter: Check = { field: 'file_path', when: { tool: '^(Edit|Write)$', value: '/src/' },
+  then: { field: 'command', tool: '^Bash$', value: '(^|\\s)npm\\s+run\\s+build(\\s|$)' } };
+function steps(check: Check) {
+  const s = sequence(check);
+  assert.ok(typeof s !== 'string', s as string);
+  return walk<string>(s);
+}
+const edit = (file_path: string) => ['Edit', { file_path }] as const;
+
+test("a sequence rule's first: kept when it came earlier in the session; the call alone breaks it", () => {
+  const w = steps(readFirst);
+  assert.deepEqual(w.call(...edit('/r/shared/context/a.md'), 'e1'), [{ item: 'e1', broken: true }]);
+  assert.deepEqual(w.call('Read', { file_path: '/r/shared/CLAUDE.md' }, 'r1'), []);
+  assert.deepEqual(w.call(...edit('/r/shared/context/b.md'), 'e2'), [{ item: 'e2', broken: false }]);
+  assert.deepEqual(w.call(...edit('/r/src/x.ts'), 'e3'), []);
+  // A turn ending changes nothing: the first counts for the whole session.
+  assert.deepEqual(w.end(), []);
+  assert.deepEqual(w.call(...edit('/r/shared/context/c.md'), 'e4'), [{ item: 'e4', broken: false }]);
+});
+
+test('a call that is both the first and a call the rule is about never keeps itself', () => {
+  const w = steps({ field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' },
+    first: { field: 'command', tool: '^Bash$', value: '(^|\\s)git\\s+(status|commit)(\\s|$)' } });
+  assert.deepEqual(w.call('Bash', { command: 'git commit -m a' }, 'c1'), [{ item: 'c1', broken: true }]);
+  assert.deepEqual(w.call('Bash', { command: 'git commit -m b' }, 'c2'), [{ item: 'c2', broken: false }]);
+});
+
+test("a sequence rule's then: kept when it follows before the turn ends; the ones still waiting at the end break it", () => {
+  const w = steps(buildAfter);
+  assert.deepEqual(w.call(...edit('/r/src/a.ts'), 'a'), []);
+  assert.deepEqual(w.call(...edit('/r/src/b.ts'), 'b'), []);
+  assert.deepEqual(w.call('Bash', { command: 'npm run build' }, 'x'), [{ item: 'a', broken: false }, { item: 'b', broken: false }]);
+  assert.deepEqual(w.call(...edit('/r/src/c.ts'), 'c'), []);
+  assert.deepEqual(w.end(), ['c']);
+  // A then in the next turn keeps nothing of the last.
+  assert.deepEqual(w.call('Bash', { command: 'npm run build' }, 'y'), []);
+});
+
+test('a call copied from an earlier session moves the walk on but is no case again', () => {
+  const w = steps(readFirst);
+  assert.deepEqual(w.call(...edit('/r/shared/context/a.md'), null), []);
+  assert.deepEqual(w.call('Read', { file_path: '/r/shared/CLAUDE.md' }, null), []);
+  assert.deepEqual(w.call(...edit('/r/shared/context/b.md'), 'e'), [{ item: 'e', broken: false }]);
+  const t = steps(buildAfter);
+  assert.deepEqual(t.call(...edit('/r/src/a.ts'), null), []);
+  assert.deepEqual(t.end(), []);
+});
+
+test("a sequence check that can't be used says why", () => {
+  assert.equal(sequence({ field: 'file_path', first: readFirst.first }), 'no calls it is about (when)');
+  assert.equal(sequence({ ...readFirst, first: undefined }), 'neither first nor then');
+  assert.equal(sequence({ ...readFirst, then: buildAfter.then }), 'both first and then');
+  assert.equal(sequence({ ...readFirst, first: { tool: '(' } }), "regex doesn't compile: (");
+  assert.equal(sequence({ ...buildAfter, when: { value: '(a+)+' } }), 'regex may take exponential time: (a+)+');
+});
+
 const confirmed = (): Verdict => ({ verdict: 'broken' });
 
 /** Files are named by their content: `rulesBy[content]` holds what rulesOf gives for it. */

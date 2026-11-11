@@ -60,7 +60,8 @@ export function language(text: string): string | null {
 /**
  * A rule's check as the extraction writes it: regular expressions over the tool's name and one input field. A shell
  * `command` is read one simple command at a time: `value` patterns see what it does, `data` patterns what it carries.
- * A judgment rule's check has no `broken`: it finds the calls a judge will read, or with `reply` every reply.
+ * A judgment rule's check has no `broken`: it finds the calls a judge will read, or with `reply` every reply. A
+ * sequence rule's has, besides the calls it is about, the call that must come `first` or follow (`then`).
  */
 export interface Check {
   field?: string;
@@ -68,7 +69,12 @@ export interface Check {
   broken?: { tool?: string; value?: string; data?: string };
   ignoreCase?: boolean;
   reply?: boolean;
+  first?: Step;
+  then?: Step;
 }
+
+/** The other call of a sequence rule: its tool, and one input field of its own. */
+export interface Step { field?: string; tool?: string; value?: string; data?: string }
 
 interface Patterns { tool?: RegExp; value?: RegExp; data?: RegExp }
 interface Compiled { field?: string; when: Patterns; broken: Patterns }
@@ -115,6 +121,55 @@ export function compile(check: Check): Compiled | string {
     }
   }
   return compiled;
+}
+
+/** A sequence rule's check compiled: the calls it is about, and the one that must come first or follow. */
+export interface Sequence { when: Compiled; first?: Compiled; then?: Compiled }
+
+/** A sequence rule's patterns compiled, or why they can't be used. */
+export function sequence(check: Check): Sequence | string {
+  if (!check.when) return 'no calls it is about (when)';
+  if (!check.first && !check.then) return 'neither first nor then';
+  if (check.first && check.then) return 'both first and then';
+  const step = (check.first ?? check.then)!;
+  const when = compile({ field: check.field, when: check.when, ignoreCase: check.ignoreCase });
+  if (typeof when === 'string') return when;
+  const other = compile({ field: step.field, when: { tool: step.tool, value: step.value, data: step.data },
+    ignoreCase: check.ignoreCase });
+  if (typeof other === 'string') return other;
+  return check.first ? { when, first: other } : { when, then: other };
+}
+
+/**
+ * One session's walk through a sequence rule, call by call: each call the rule is about is kept or broken as soon as
+ * that is known. A `first` must have come earlier in the session; a `then` must follow before the turn ends (`end`).
+ * A call given without an item (copied from an earlier session) moves the walk on and is no case.
+ */
+export function walk<T>(s: Sequence) {
+  let came = false; // a call matching `first`
+  let waiting: T[] = []; // calls the rule is about, waiting for their `then`
+  return {
+    call(tool: string, input: Record<string, unknown>, item: T | null): { item: T; broken: boolean }[] {
+      const decided: { item: T; broken: boolean }[] = [];
+      if (s.then && waiting.length && applies(s.then, tool, input)) {
+        for (const w of waiting) decided.push({ item: w, broken: false });
+        waiting = [];
+      }
+      // Before this call counts as a first: a call never keeps itself.
+      if (item !== null && applies(s.when, tool, input)) {
+        if (s.first) decided.push({ item, broken: !came });
+        else waiting.push(item);
+      }
+      if (s.first && !came && applies(s.first, tool, input)) came = true;
+      return decided;
+    },
+    /** The turn ended: the calls still waiting for their `then` broke the rule. */
+    end(): T[] {
+      const left = waiting;
+      waiting = [];
+      return left;
+    },
+  };
 }
 
 // The last command line read: every rule in effect looks at the same call in turn.
