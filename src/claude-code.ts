@@ -70,9 +70,10 @@ const tokens = (v: unknown) => (typeof v === 'number' ? v : 0);
 const textOf = (c: unknown) => (typeof c === 'string' ? c
   : Array.isArray(c) ? c.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n') : '');
 
-/** A launcher that appends the user's own instructions to the system prompt marks them with this tag; the rest of the
- * system prompt is Claude Code's, or the launcher's. */
-const INSTRUCTIONS = /<user-instructions>([\s\S]*?)<\/user-instructions>/g;
+/** A launcher that appends the user's own instructions to the system prompt marks them with this tag, opened on a line
+ * of its own (the tag named in a sentence is not a block); the rest of the system prompt is Claude Code's, or the
+ * launcher's. */
+const INSTRUCTIONS = /(?:^|\n)<user-instructions>([\s\S]*?)<\/user-instructions>/g;
 
 /** The events of one line; false when it should have parsed and didn't. Only the lines heeded needs are parsed, found
  * by a substring first: a tool result, the bulk of a transcript, only when it answers one of the agent's questions; the

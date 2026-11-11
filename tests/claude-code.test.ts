@@ -380,3 +380,12 @@ test('a snapshot line without the tag is never parsed', async () => {
     ...lines(14, broken)]);
   assert.deepEqual(await unrecognized(s.configDir, repo), []);
 });
+
+test('a block starts on a line of its own: the tag named in a sentence is not one', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  writeSession(s.configDir, repo, 'a', [at('1', snapshot([`${own}\nText in a <user-instructions> block is the user's.\n`
+    + launcher('run the linter before committing')]))]);
+  assert.deepEqual((await all(s.configDir, repo)).filter((e) => e.kind === 'prompt'),
+    [{ ...prompt('run the linter before committing', '1', 'user', false), session: true }]);
+});
