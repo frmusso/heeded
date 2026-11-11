@@ -2,8 +2,8 @@
 
 did your coding agent follow its instructions?
 
-you write rules for your agent in `CLAUDE.md`, then hope they stick. heeded reads the transcripts claude code leaves on
-disk, checks each rule it can against what the agent actually did, and tells you what happened.
+you write rules for your agent in `CLAUDE.md` and hope they stick. heeded reads the transcripts claude code keeps on
+disk and tells you which rules were kept, which were broken, when and where.
 
 ```text
 $ npx heeded
@@ -16,53 +16,77 @@ $ npx heeded
       nov 2   8c0e8fab  git add -A
   ✗ answer in italian   kept 96% of 3,812      broken 152×  last today
       after compaction kept 69% of 410
-      nov 10  e7128125  en: "Sure — here's the plan for the …"
-  ✓ never force-push    kept 100% of 61        2 to confirm
-  ? never push to main  3 to confirm
+  ✓ never force-push    kept 100% of 61
   ○ use pnpm, not npm   never applied          ~40 tokens every session
   · failing test first  kept 80% of 20 judged  broken 4×    last 3 days ago
-      nov 7   1a2b3c4d  call Edit: src/parser.ts
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                              98%        97%        91%     84%
 
   21 rules not judged yet: heeded rules
-  37 cases waiting for the judge
 ```
 
 <sub>a sketch: the numbers are invented.</sub>
 
-- which rules are kept, which are broken, where and how often: a violation only once a judge confirmed it
-- which rules never apply, yet cost tokens in every session
-- how compliance moves as the context fills up and after it's compacted
+| mark | the rule |
+| --- | --- |
+| `✗` | was broken: every case confirmed by the judge, listed with its date, session and call |
+| `✓` | was kept every time it applied |
+| `?` | has candidates only: a pattern flagged them, the judge hasn't looked yet |
+| `○` | never applied: it sits in every session's context for nothing |
+| `·` | needs a judge, no pattern can decide it: a sample of its cases was judged |
+
+- `kept 95% of 214`: the rule applied 214 times and was kept in 95% of them.
+- `after compaction`: the same rule, counted only after claude code compacted the context.
+- `kept by context depth`: every rule together, by how full the context was at the time.
+
+## use
+
+```sh
+npx heeded           # the report, for the claude code sessions run in this folder
+npx heeded rules     # the rules found, and how each one is checked
+npx heeded --json    # everything, as json
+```
+
+needs node 22 or later and claude code, signed in: heeded calls your own `claude` to read rules and to judge. not on
+npm yet: run it from a clone, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## how it works
 
-claude code records in each transcript the instruction files it loaded, word for word. heeded splits them into
-sections and asks your own `claude` (sonnet) to turn the rules in each into checks: a pattern over a tool call, or the
-language a reply must be in. it reads only the latest version of a section, and older versions keep the rules whose
-words they hold. it shows the estimate and asks first; the answer is cached, and every check must pass its own examples
-before it counts. a rule a plain check can't decide gets the calls or replies it is about instead.
+1. **find the sessions.** the transcripts of the sessions run in this folder and its worktrees, subagents included,
+   under `~/.claude/projects/`.
+2. **read the rules.** claude code writes into each transcript the instruction files it loaded, word for word. heeded
+   splits them into sections and asks `claude` (sonnet) for each section's rules, each with a check:
+   - a pattern over a tool call, like `git add -A` in a bash command;
+   - the language replies must be in;
+   - otherwise, the calls or replies the rule is about, left to the judge.
 
-a pattern written by a model finds candidates, not violations. every call a pattern says broke its rule, and every case
-of a rule no pattern can decide, goes to a judge: your own `claude` again, reading an excerpt of the session, the prompt
-that started the turn and what followed (a command as run, an edit with the start of what it writes, never for a file of
-secrets like `.env`), secrets redacted. only your words grant a permission: typed, picked from a question, or set for
-the session in a `<user-instructions>` block a launcher appends to the system prompt; an agent's never do. a run judges
-within 150k tokens, asked for with the rest. verdicts are cached, so a case is paid for once and coverage grows run
-after run; a judgment rule is judged until 20 of its cases are decided.
+   a check that fails its own examples is set aside. a section is read once, then cached.
+3. **check every call.** one pass over the transcripts: each call and reply against the rules in effect at that point.
+   a shell command is read the way a shell reads it, so `echo "rm -rf"` isn't running `rm`.
+4. **judge.** a pattern finds candidates, not violations. each candidate, and a sample of the cases no pattern can
+   decide, goes to `claude` (haiku) with an excerpt of its session: your prompt, what the agent did since, the call
+   itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. each
+   verdict is cached.
+5. **report.** what was kept and what was broken, with the evidence, by context depth and after compaction.
 
-a shell command is read the way the shell reads it, one command at a time: what it runs is checked apart from what it
-carries (a file written through a heredoc, a commit message, the pattern of a search), so writing about `rm -rf` is not
-running it, and a rule about commit messages can still read them.
+steps 2 and 4 cost tokens. heeded shows the estimate and asks once, before spending anything:
+
+```text
+11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~163k tokens
+go ahead? [y/N]
+```
+
+a run judges within 150k tokens and nothing is paid for twice, so coverage grows run after run. off a terminal (ci, a
+script) it never spends.
+
+`heeded rules` shows what each rule became:
 
 ```text
 $ npx heeded rules
 
-  ~/repos/app · 2 files · 6 rules
+  ~/repos/app · 1 file · 5 rules
 
-  ~/.claude/CLAUDE.md
-    ✓ clickup is read-only       tool mcp__.*clickup.*  broken tool _(create|update|delete)_
   CLAUDE.md
     ✓ never git add -A           Bash command  when (^|\s)git\s+add(\s|$)  broken \s(-A|--all)\b
     ✓ answer in italian          language it
@@ -71,19 +95,17 @@ $ npx heeded rules
     ! never kill the dev server  failed its examples: keeps "pkill -f vite-test"
 ```
 
-## use
+`✓` a pattern decides it: `when` picks the calls it applies to, `broken` the ones that break it. `·` the judge
+decides, on the calls or replies shown. `!` its check was set aside, and why.
 
-```sh
-npx heeded           # the report on the claude code sessions run in this folder
-npx heeded rules     # the rules found, and how each one is checked
-npx heeded --json    # everything, as json
-```
+## privacy
 
-needs node 22 or later and claude code. reads `CLAUDE_CONFIG_DIR`, else `~/.claude`; caches rules and verdicts in
-`XDG_CACHE_HOME`, else `~/.cache`.
+local and read-only: heeded never changes your transcripts, instruction files or settings, and writes only to its own
+cache (`~/.cache/heeded`, or under `$XDG_CACHE_HOME`). two things leave your machine, through your own `claude`: the
+text of instruction sections not read before, and the excerpts the judge reads. both have secrets redacted first, and
+what is written to files like `.env` is never sent. no telemetry.
 
-local and read-only on your files. the only things that leave your machine are the text of new instruction sections and
-the excerpts the judge reads, secrets redacted, through your own `claude`. no telemetry.
+`CLAUDE_CONFIG_DIR` points heeded at another claude code folder (default `~/.claude`).
 
 > **status:** v2.1, not published yet.
 
