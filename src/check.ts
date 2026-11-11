@@ -145,7 +145,7 @@ function found(p: Patterns, all: Simple[]): boolean {
  * Whether the rule applies to a call and, when it does, the view that broke it: the call applies when its tool
  * matches and one view matches `when`; it is broken when, besides, that same view matches `broken`.
  */
-function judge(c: Compiled, tool: string, input: Record<string, unknown>): { verdict: 'none' | 'kept' | 'broken'; by?: Simple } {
+function assess(c: Compiled, tool: string, input: Record<string, unknown>): { verdict: 'none' | 'kept' | 'broken'; by?: Simple } {
   if (c.when.tool && !c.when.tool.test(tool)) return { verdict: 'none' };
   const all = views(c.field, input);
   const applying = needs(c.when) ? all.filter((v) => hits(c.when, v)) : all;
@@ -157,7 +157,7 @@ function judge(c: Compiled, tool: string, input: Record<string, unknown>): { ver
 }
 
 export function verdict(c: Compiled, tool: string, input: Record<string, unknown>): 'none' | 'kept' | 'broken' {
-  return judge(c, tool, input).verdict;
+  return assess(c, tool, input).verdict;
 }
 
 /** Whether a call is one the check is about, whatever would break it: asked on every call, so it allocates nothing. */
@@ -170,7 +170,7 @@ export function applies(c: Compiled, tool: string, input: Record<string, unknown
  * command as written doesn't show it: a heredoc's body), the field's value, or the tool when the check has no field.
  */
 export function culprit(c: Compiled, tool: string, input: Record<string, unknown>): string {
-  const by = judge(c, tool, input).by;
+  const by = assess(c, tool, input).by;
   if (by) return (c.when.data || c.broken.data) && !by.text.includes(by.carries) ? `${by.text} ${by.carries}` : by.text;
   const value = c.field === undefined ? undefined : input[c.field];
   return typeof value === 'string' ? value : tool;

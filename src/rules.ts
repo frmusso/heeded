@@ -78,7 +78,8 @@ const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /**
  * A rule as the extraction returned it, checked here: its quote must be in its section as the model read it (secrets
- * redacted), word for word (spacing aside), or the rule is dropped; a check that can't be trusted is demoted, with the reason, and never gives a violation.
+ * redacted), word for word (spacing aside), or the rule is dropped; a check that can't be trusted is demoted, with the
+ * reason, and never gives a violation.
  */
 export function verify(raw: unknown, section: Section): Rule | null {
   const r = raw as Record<string, unknown>;
