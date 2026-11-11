@@ -218,6 +218,25 @@ test('heeded rules: the rules and how each is checked', async () => {
   assert.match(out, /CLAUDE\.md\n {4}✓ never git add -A {2}Bash command {2}when /);
 });
 
+test('heeded rules never judges: what it lists doesn\'t depend on verdicts', async () => {
+  for (const all of [[], ['--all']]) {
+    const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
+    const { code, err, asked } = await heeded(['rules', ...all], { terminal: true });
+    assert.equal(code, 0);
+    assert.deepEqual([err, asked, calls()], ['', [], 0], all.join(''));
+  }
+});
+
+test('heeded rules on a terminal asks to read the new sections, and only that', async () => {
+  const { heeded, calls } = setup({ replies: [answer, confirmed] });
+  const { code, out, err, asked } = await heeded(['rules'], { terminal: true });
+  assert.equal(code, 0);
+  assert.equal(err, '1 rule section to read · claude sonnet · ~6k tokens\nread 1 section · 4,000 tokens\n');
+  assert.deepEqual(asked, ['go ahead? [y/N] ']);
+  assert.equal(calls(), 1);
+  assert.match(out, /✓ never git add -A/);
+});
+
 test('colour only when stdout is a terminal and NO_COLOR is not set', async () => {
   const { heeded, confirm } = setup({ cached: true });
   await confirm();

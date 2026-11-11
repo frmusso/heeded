@@ -138,6 +138,12 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
     if (found.read) ({ report, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir));
     return found.read > 0;
   };
+  /** Asks about the new sections alone, and reads them on yes. */
+  const askToRead = async (then: string) => {
+    io.err(`${plural(distinct.length, 'rule section')} to read${then} · claude ${MODEL}`
+      + ` · ${approx(estimate(distinct).tokens)} tokens\n`);
+    return await yes() && await readSections();
+  };
   /** Judges the cases a round picks, then counts again; with `all`, again while cases wait and the last round judged
    * some. One line for every round. */
   const judgeCases = async () => {
@@ -161,7 +167,10 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
 
   // Reading sections and judging cases spend the user's quota: only when asked on a terminal, after what the run may
   // spend. Every call costs ~4k tokens: an estimate is never under a thousand.
-  if (io.terminal && (distinct.length || report.toJudge > 0)) {
+  if (io.terminal && command === 'rules') {
+    // The rules and their checks don't depend on verdicts: only new sections change the list.
+    if (distinct.length) await askToRead('');
+  } else if (io.terminal && (distinct.length || report.toJudge > 0)) {
     if (!all) {
       // One question. The cases of the rules about to be read aren't known yet: with sections to read, it shows the
       // ceiling.
@@ -180,12 +189,7 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
       if (await yes() && (!distinct.length || await readSections())) await judgeCases();
     } else {
       // Every case: what judging them costs is known once the new sections are read, so the reading is asked first.
-      let reading = true;
-      if (distinct.length) {
-        io.err(`${plural(distinct.length, 'rule section')} to read first · claude ${MODEL}`
-          + ` · ${approx(estimate(distinct).tokens)} tokens\n`);
-        reading = await yes() && await readSections();
-      }
+      const reading = !distinct.length || await askToRead(' first');
       if (reading && report.toJudge > 0) {
         const more = report.atMost > report.toJudge;
         io.err(`${plural(report.toJudge, 'case')} to judge${more ? ', more if their rules apply' : ''}`
