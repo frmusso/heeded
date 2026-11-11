@@ -154,20 +154,28 @@ export function sequence(check: Check): Sequence | string {
 export function walk<T>(s: Sequence, late = false) {
   let came = false; // a call matching `first`
   let waiting: T[] = []; // calls the rule is about, waiting for their `then`
+  const step = (s.first ?? s.then)!;
+  // Positions in one call compare only when both patterns read the same field: a command line's simple commands.
+  const inline = step.field === s.when.field;
   return {
     call(tool: string, input: Record<string, unknown>, item: T | null): { item: T; broken: boolean }[] {
       const decided: { item: T; broken: boolean }[] = [];
-      if (s.then && waiting.length && applies(s.then, tool, input)) {
+      const at = position(s.when, tool, input);
+      const other = position(step, tool, input);
+      if (s.then && waiting.length && other >= 0) {
         for (const w of waiting) decided.push({ item: w, broken: false });
         waiting = [];
       }
-      // Before this call counts as a first: a call never keeps itself.
-      if (item !== null && applies(s.when, tool, input)) {
+      if (item !== null && at >= 0) {
+        // A call keeps its own rule only when, in one command line, the other comes first (or then, after).
+        const before = inline && other >= 0 && other < at;
+        const after = inline && other > at;
         if (s.first) {
-          if (came || !late) decided.push({ item, broken: !came });
-        } else waiting.push(item);
+          if (came || before || !late) decided.push({ item, broken: !came && !before });
+        } else if (after) decided.push({ item, broken: false });
+        else waiting.push(item);
       }
-      if (s.first && !came && applies(s.first, tool, input)) came = true;
+      if (s.first && other >= 0) came = true;
       return decided;
     },
     /** The turn ended: the calls still waiting for their `then` broke the rule. */
@@ -220,6 +228,15 @@ function assess(c: Compiled, tool: string, input: Record<string, unknown>): { ve
 
 export function verdict(c: Compiled, tool: string, input: Record<string, unknown>): 'none' | 'kept' | 'broken' {
   return assess(c, tool, input).verdict;
+}
+
+/** Where in a call a check's `when` first matches: the simple command it does it in, for a shell command, else 0; -1
+ * when the check isn't about the call. Within one command line, what runs first comes first. */
+function position(c: Compiled, tool: string, input: Record<string, unknown>): number {
+  if (c.when.tool && !c.when.tool.test(tool)) return -1;
+  const all = views(c.field, input);
+  if (!needs(c.when)) return 0;
+  return all.findIndex((v) => hits(c.when, v));
 }
 
 /** Whether a call is one the check is about, whatever would break it: asked on every call, so it allocates nothing. */

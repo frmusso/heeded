@@ -221,6 +221,21 @@ test("a sequence rule's then: kept when it follows before the turn ends; the one
   assert.deepEqual(w.call('Bash', { command: 'npm run build' }, 'y'), []);
 });
 
+test('in one command line, the simple commands keep their order: a first before keeps, a then after keeps', () => {
+  const push = (first: string) => steps({ field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+push(\\s|$)' },
+    first: { field: 'command', tool: '^Bash$', value: first } });
+  const log = '(^|\\s)git\\s+log(\\s|$)';
+  assert.deepEqual(push(log).call('Bash', { command: 'git log --oneline origin/main..main && git push' }, 'p'), [{ item: 'p', broken: false }]);
+  assert.deepEqual(push(log).call('Bash', { command: 'git push && git log --oneline origin/main..main' }, 'p'), [{ item: 'p', broken: true }]);
+  const test = (then: string) => steps({ field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' },
+    then: { field: 'command', tool: '^Bash$', value: then } });
+  const npm = '(^|\\s)npm\\s+test(\\s|$)';
+  assert.deepEqual(test(npm).call('Bash', { command: 'git commit -m x && npm test' }, 'c'), [{ item: 'c', broken: false }]);
+  const before = test(npm);
+  assert.deepEqual(before.call('Bash', { command: 'npm test && git commit -m x' }, 'c'), []);
+  assert.deepEqual(before.end(), ['c']);
+});
+
 test('a call copied from an earlier session moves the walk on but is no case again', () => {
   const w = steps(readFirst);
   assert.deepEqual(w.call(...edit('/r/shared/context/a.md'), null), []);

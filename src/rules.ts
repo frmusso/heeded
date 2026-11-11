@@ -394,7 +394,8 @@ follow it before the agent's turn ends (the user's next message): each { "field"
 "when" is. breaking: the calls of a session, in order, that break it (a call it is about without the other); keeping:
 the calls of one that keeps it. Each example { "tool", "value" } gives the value of the field its own pattern reads.
 A "first" holds for the rest of the session once its call came: a rule asking for it each time (a failing test before
-each change) or for the user's go is "judgment".
+each change) or for the user's go is "judgment". A pattern for a command matches it whatever options come between its
+words (git\s+log\s.*origin/main\.\.main, not git\s+log\s+origin/main): a call missed is a violation counted.
 
 A "judgment" rule has a check that finds the cases a judge will read whenever some calls or replies can show it kept
 or broken, however many they are: { "reply": true } for a rule about what the agent tells the user; else the calls it

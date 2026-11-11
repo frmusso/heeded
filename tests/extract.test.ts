@@ -191,7 +191,8 @@ test('the prompt finds sequence rules: a call before or after another, the examp
     '"first", the call that must have come earlier in the same session',
     '"then", the call that must follow it before the agent\'s turn ends', 'the calls of a session, in order, that break it',
     'the value of the field its own pattern reads', 'is "judgment"',
-    'A "first" holds for the rest of the session once its call came', "or for the user's go is \"judgment\""]) {
+    'A "first" holds for the rest of the session once its call came', "or for the user's go is \"judgment\"",
+    'whatever options come between its words', 'git\\s+log\\s.*origin/main']) {
     assert.ok(stdin.includes(words), words);
   }
   // The order of the work is no longer a reason to leave a rule unchecked.
