@@ -265,6 +265,17 @@ test("a judged rule's mark is its outcome, and so is its place: broken first, th
   assert.match(text(report, { ...options, columns: 120, color: true }), /\x1b\[31m✗\x1b\[39m failing test first/);
 });
 
+test('a judged rule whose sample is still open says how many cases it waits for; ties go to the most cases', () => {
+  const ev = { evidence: [seen('2026-11-08T12:00:00Z', '19df6c20', 'git add -A')] };
+  const report = { ...sketch, toJudge: 17, rules: [
+    r('never rebase', 'broken', 20, 1, ev), r('never force-push', 'broken', 40, 2, ev),
+    r('say what you changed', 'judgment', 3, 0, { judged: 3, toJudge: 17 }),
+  ] };
+  const out = text(report, { ...options, columns: 120 });
+  assert.match(out, /\n {4}✗ never force-push [^\n]+\n[^\n]+\n {4}✗ never rebase /);
+  assert.match(out, /\n {4}✓ say what you changed +kept 100% of 3 judged +17 to judge\n/);
+});
+
 test('no transcripts: one line naming the folder and the config dir', () => {
   assert.equal(text(empty, options), '\n  no claude code transcripts for ~/repos/app in ~/.claude\n');
 });

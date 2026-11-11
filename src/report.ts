@@ -121,7 +121,8 @@ export function text(r: Report, o: TextOptions): string {
     : x.status === 'to-confirm' ? []
     : [`kept ${kept(x.applied, x.broken)} of ${thousands(x.applied)}${x.status === 'judgment' ? ' judged' : ''}`,
       ...(x.broken ? [`broken ${thousands(x.broken)}×`, `last ${ago(x.evidence[0].at, o.now)}`] : [])]),
-  ...(x.status !== 'judgment' && x.toJudge ? [`${thousands(x.toJudge)} to confirm`] : [])]);
+  // What may still change the row: a tool rule's candidates, a judged rule's cases its sample still takes.
+  ...(x.toJudge ? [`${thousands(x.toJudge)} ${x.status === 'judgment' ? 'to judge' : 'to confirm'}`] : [])]);
   const at = lineCells(order, shown);
   const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]))
     .map((l, i) => `${at.get(shown[i])}${l}`);

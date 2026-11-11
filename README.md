@@ -35,13 +35,14 @@ $ npx heeded
 
 | mark | the rule |
 | --- | --- |
-| `✗` | was broken: every case confirmed by the judge, listed with its date, session and call |
+| `✗` | was broken: every case confirmed by the judge, listed with its date, session and what shows it |
 | `✓` | was kept every time it applied |
 | `?` | has candidates only: a pattern flagged them, the judge hasn't looked yet |
 | `○` | never applied in these sessions: it sits in every session's context all the same |
 
 - `kept 95% of 214`: the rule applied 214 times and was kept in 95% of them.
 - `of 20 judged`: no pattern can decide the rule, so the judge read a sample of its cases: 20 of them applied.
+  `17 to judge`, `2 to confirm`: cases still waiting for the judge, which can change the row on the next run.
 - `after compaction`: the same rule, counted only after claude code compacted the context.
 - each rule is under the file it is written in: the folder's files first, then the others (`~/.claude/CLAUDE.md` is
   loaded in every project, so a rule there can be never applied here and needed elsewhere).
