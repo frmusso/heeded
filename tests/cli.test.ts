@@ -133,7 +133,7 @@ test('not a terminal: nothing read or judged, the report says what waits', async
   const doc = JSON.parse((await heeded(['--json'])).out);
   assert.equal(calls(), 0);
   assert.equal(doc.toJudge, 1);
-  assert.deepEqual([doc.rules[0].broken, doc.rules[0].toConfirm], [0, 1]);
+  assert.deepEqual([doc.rules[0].broken, doc.rules[0].toJudge], [0, 1]);
   const { out } = await heeded([]);
   assert.match(out, /\n {2}\? never git add -A {2}1 to confirm\n/);
   assert.match(out, /\n {2}1 case waiting for the judge\n/);
@@ -253,7 +253,7 @@ test('an edited section is asked about again; until it is read, its rules from b
   const before = JSON.parse((await heeded(['--json'])).out);
   assert.equal(before.notRead, 1);
   // The candidates each rule found: none is judged here.
-  const candidates = (doc: { rules: { name: string; toConfirm: number }[] }) => doc.rules.map((r) => [r.name, r.toConfirm]).sort();
+  const candidates = (doc: { rules: { name: string; toJudge: number }[] }) => doc.rules.map((r) => [r.name, r.toJudge]).sort();
   assert.deepEqual(candidates(before), [['never git add -A', 2]]);
 
   const forcePush = { quote: 'never force-push', name: 'never force-push', kind: 'tool', trigger: 'pushing',

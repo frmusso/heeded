@@ -5,9 +5,9 @@ import type { Data, RuleData } from './check.ts';
 export interface Report extends Data { folder: string; configDir: string; unrecognized: string[] }
 
 export function json(r: Report): string {
-  const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, files, rules, byDepth } = r;
-  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, files,
-    rules, byDepth }, null, 2)}\n`;
+  const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, atMost, files, rules, byDepth } = r;
+  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, atMost,
+    files, rules, byDepth }, null, 2)}\n`;
 }
 
 interface TextOptions { columns: number; color: boolean; now: Date; home: string }
@@ -71,7 +71,7 @@ export function text(r: Report, o: TextOptions): string {
     : x.status === 'to-confirm' ? []
     : [`kept ${kept(x.applied, x.broken)} of ${thousands(x.applied)}${x.status === 'judgment' ? ' judged' : ''}`,
       ...(x.broken ? [`broken ${thousands(x.broken)}×`, `last ${ago(x.evidence[0].at, o.now)}`] : [])]),
-  ...(x.toConfirm ? [`${thousands(x.toConfirm)} to confirm`] : [])]);
+  ...(x.status !== 'judgment' && x.toJudge ? [`${thousands(x.toJudge)} to confirm`] : [])]);
   const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]));
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 4)) > o.columns) width--;

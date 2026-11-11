@@ -8,7 +8,7 @@ const buckets = (counts: [number, number][]) => counts.map(([applied, broken], i
 
 const empty: Report = {
   folder: '/home/someone/repos/app', configDir: '/home/someone/.claude', from: null, to: null, sessions: 0, subagents: 0,
-  unrecognized: [], notRead: 0, toJudge: 0, files: [], rules: [], byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]),
+  unrecognized: [], notRead: 0, toJudge: 0, atMost: 0, files: [], rules: [], byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]),
 };
 
 test('the json document: heeded 2 first, then the report, two-space indented', () => {
@@ -19,7 +19,7 @@ test('the json document: heeded 2 first, then the report, two-space indented', (
       id: '3f2a9c1e', name: 'never sudo', quote: 'never `sudo`', files: ['/home/someone/repos/app/CLAUDE.md'],
       status: 'demoted', reason: 'failed its examples: breaks "sudo ls"',
       check: { field: 'command', when: { tool: '^Bash$' }, broken: { value: '^sudo ' } },
-      applied: 0, broken: 0, judged: 0, toConfirm: 0, afterCompaction: { applied: 0, broken: 0 },
+      applied: 0, broken: 0, judged: 0, toJudge: 0, afterCompaction: { applied: 0, broken: 0 },
       byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]), tokens: 3, evidence: [],
     }],
     byDepth: buckets([[2, 1], [0, 0], [0, 0], [1, 0]]),
@@ -28,7 +28,7 @@ test('the json document: heeded 2 first, then the report, two-space indented', (
   assert.ok(doc.startsWith('{\n  "heeded": 2,\n  "folder": "/home/someone/repos/app",\n  "configDir": '), doc);
   assert.ok(doc.endsWith('\n}\n'));
   assert.deepEqual(Object.keys(JSON.parse(doc)), ['heeded', 'folder', 'configDir', 'from', 'to', 'sessions', 'subagents',
-    'unrecognized', 'notRead', 'toJudge', 'files', 'rules', 'byDepth']);
+    'unrecognized', 'notRead', 'toJudge', 'atMost', 'files', 'rules', 'byDepth']);
   assert.deepEqual(JSON.parse(doc), { heeded: 2, ...report });
 });
 
@@ -38,7 +38,7 @@ test('the json document of an empty history', () => {
 
 // The sketch of the report, with numbers that give its percentages.
 const r = (name: string, status: RuleData['status'], applied: number, broken: number, more: Partial<RuleData> = {}): RuleData => ({
-  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], status, applied, broken, judged: 0, toConfirm: 0,
+  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], status, applied, broken, judged: 0, toJudge: 0,
   afterCompaction: { applied: 0, broken: 0 }, byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]), tokens: 5, evidence: [],
   ...more,
 });
@@ -53,14 +53,15 @@ const sketch: Report = {
       seen('2026-10-20T12:00:00Z', '0a1b2c3d', 'git add -A')] }),
     r('always talk to me in italian', 'broken', 3812, 152, { afterCompaction: { applied: 410, broken: 127 }, evidence: [
       seen('2026-11-10T09:00:00Z', 'e7128125', 'en: "Sure — here\'s the plan for the …"')] }),
-    r('never force-push', 'kept', 61, 0, { toConfirm: 2 }),
-    r('never push to main', 'to-confirm', 0, 0, { toConfirm: 4 }),
+    r('never force-push', 'kept', 61, 0, { toJudge: 2 }),
+    r('never push to main', 'to-confirm', 0, 0, { toJudge: 4 }),
     r('never kill billing', 'never-applied', 0, 0, { tokens: 40 }),
     r('failing test first', 'judgment', 20, 4, { judged: 26, evidence: [
       { ...seen('2026-11-07T12:00:00Z', '1a2b3c4d', 'call Edit: src/x.ts'), quote: 'call Edit: src/x.ts' }] }),
     r('ask before spending', 'judgment', 0, 0),
   ],
   toJudge: 9,
+  atMost: 9,
   byDepth: buckets([[2310, 46], [900, 27], [300, 27], [100, 16]]),
 };
 const options = { columns: 80, color: false, now: new Date('2026-11-10T15:00:00Z'), home: '/home/someone' };

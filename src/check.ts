@@ -202,8 +202,9 @@ export interface RuleData {
   broken: number;
   /** Cases with a verdict, `none` included. */
   judged: number;
-  /** A tool rule's candidates the judge hasn't seen: neither kept nor broken yet. */
-  toConfirm: number;
+  /** The cases waiting for the judge now: a tool rule's candidates, neither kept nor broken yet; a judgment rule's cases
+   * its sample still takes. */
+  toJudge: number;
   afterCompaction: Count;
   byDepth: { from: number; to: number | null; applied: number; broken: number }[];
   /** What the rule costs every session that loads it. */
@@ -222,6 +223,8 @@ export interface Data {
   notRead: number;
   /** The cases a judge would read now. */
   toJudge: number;
+  /** The cases every rule may still take, if each went on applying: its sample grows as its cases apply. */
+  atMost: number;
   rules: RuleData[];
   byDepth: RuleData['byDepth'];
 }
@@ -243,6 +246,8 @@ const DECIDED = 20;
 const JUDGED = 40;
 const allowed = (t: Tally) => (t.rule.kind !== 'judgment' ? Infinity
   : Math.max(0, t.all.applied ? Math.min(JUDGED - t.judged, DECIDED - t.all.applied) : PROBE - t.judged));
+/** The most a rule may still take: a judgment rule whose sample hasn't ended, every case up to 40 judged. */
+const most = (t: Tally) => (t.rule.kind !== 'judgment' ? t.unjudged : allowed(t) ? Math.min(t.unjudged, JUDGED - t.judged) : 0);
 
 /** A rule's cases waiting: latest first (ties by key), an excerpt once (two events can read alike), at most 40. */
 function trim(list: Excerpt[]) {
@@ -482,24 +487,27 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     readVersions,
 
     result(): Data {
-      const rules = [...tallies.values()].map(({ rule, files, all, after, depth, evidence, judged, unjudged }): RuleData => ({
-        id: rule.id,
-        name: rule.name,
-        quote: rule.quote,
-        files: [...files],
-        status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
-          : all.broken ? 'broken' : all.applied ? 'kept' : unjudged ? 'to-confirm' : 'never-applied',
-        ...(rule.demoted || rule.noCases ? { reason: rule.demoted ?? rule.noCases } : {}),
-        ...(rule.check ? { check: rule.check } : {}),
-        applied: all.applied,
-        broken: all.broken,
-        judged,
-        toConfirm: rule.kind === 'tool' ? unjudged : 0,
-        afterCompaction: after,
-        byDepth: buckets(depth),
-        tokens: Math.ceil(rule.quote.length / 4),
-        evidence: evidence.toReversed().sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
-      }));
+      const rules = [...tallies.values()].map((t): RuleData => {
+        const { rule, files, all, after, depth, evidence, judged, unjudged } = t;
+        return {
+          id: rule.id,
+          name: rule.name,
+          quote: rule.quote,
+          files: [...files],
+          status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
+            : all.broken ? 'broken' : all.applied ? 'kept' : unjudged ? 'to-confirm' : 'never-applied',
+          ...(rule.demoted || rule.noCases ? { reason: rule.demoted ?? rule.noCases } : {}),
+          ...(rule.check ? { check: rule.check } : {}),
+          applied: all.applied,
+          broken: all.broken,
+          judged,
+          toJudge: Math.min(allowed(t), unjudged),
+          afterCompaction: after,
+          byDepth: buckets(depth),
+          tokens: Math.ceil(rule.quote.length / 4),
+          evidence: evidence.toReversed().sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
+        };
+      });
       // Broken rules first, the least kept leading; then kept, to confirm, never applied, judgment, demoted.
       const rank = ['broken', 'kept', 'to-confirm', 'never-applied', 'judgment', 'demoted'];
       const keptShare = (r: RuleData) => (r.applied ? (r.applied - r.broken) / r.applied : 0);
@@ -512,10 +520,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           sum[i].broken += c.broken;
         });
       }
-      // Every candidate to confirm; of a judgment rule's cases, as many as its sample still takes.
-      const toJudge = [...tallies.values()].reduce((n, t) => n + Math.min(allowed(t), t.unjudged), 0);
       return { from, to, sessions, subagents, files: [...files], notRead: new Set(pending().map((p) => p.section.hash)).size,
-        toJudge, rules, byDepth: buckets(sum) };
+        toJudge: rules.reduce((n, r) => n + r.toJudge, 0), atMost: [...tallies.values()].reduce((n, t) => n + most(t), 0),
+        rules, byDepth: buckets(sum) };
     },
   };
 }

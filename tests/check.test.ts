@@ -313,7 +313,7 @@ test('the totals: sections not read yet, the files measured, sessions and subage
     reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s1', 'x2'), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' }),
     start('s3'), files({ '/r/CLAUDE.md': 'A' })],
   { A: [addAll] }, { M: missing.map((section) => ({ section, identity: section.hash, read: false, readAt: null })) });
-  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2, toJudge: 0,
+  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2, toJudge: 0, atMost: 0,
     files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md', '/r/sub/CLAUDE.md'], sessions: 2, subagents: 1,
     from: '2026-11-01T09:00:00Z', to: '2026-11-05T08:00:00Z' });
 });
@@ -397,7 +397,7 @@ const by = (verdicts: Record<string, Verdict>) => (rule: string, key: string) =>
 const at = (day: number) => ({ at: `2026-11-0${day}T10:00:00Z` });
 const tally = (data: Data, r: Rule) => {
   const x = data.rules.find((y) => y.id === r.id)!;
-  return { status: x.status, applied: x.applied, broken: x.broken, judged: x.judged, toConfirm: x.toConfirm };
+  return { status: x.status, applied: x.applied, broken: x.broken, judged: x.judged, toJudge: x.toJudge };
 };
 
 test('a candidate counts only once judged: broken when confirmed, kept, or not a case of the rule', () => {
@@ -406,13 +406,13 @@ test('a candidate counts only once judged: broken when confirmed, kept, or not a
   assert.equal(ids.length, 3);
   const data = count(events, { A: [addAll] }, {},
     by({ [ids[0]]: { verdict: 'broken', quote: 'git add -A' }, [ids[1]]: { verdict: 'kept' }, [ids[2]]: { verdict: 'none' } }));
-  assert.deepEqual(tally(data, addAll), { status: 'broken', applied: 2, broken: 1, judged: 3, toConfirm: 0 });
+  assert.deepEqual(tally(data, addAll), { status: 'broken', applied: 2, broken: 1, judged: 3, toJudge: 0 });
   assert.deepEqual(data.rules[0].evidence, [{ ...at(3), session: 's1', agent: null, text: 'git add -A', quote: 'git add -A' }]);
 });
 
 test("a rule whose candidates aren't judged yet is to confirm, never broken", () => {
   const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A'), bash('git add -A')], { A: [addAll] }, {}, unjudged);
-  assert.deepEqual(tally(data, addAll), { status: 'to-confirm', applied: 0, broken: 0, judged: 0, toConfirm: 2 });
+  assert.deepEqual(tally(data, addAll), { status: 'to-confirm', applied: 0, broken: 0, judged: 0, toJudge: 2 });
   assert.deepEqual(data.rules[0].evidence, []);
   assert.equal(data.toJudge, 2);
 });
@@ -428,7 +428,7 @@ test('the cases waiting: latest first, at most 40 per rule, with their rule and 
     assert.ok(k.excerpt.endsWith(`\ncall Bash: git add -A f${44 - i}.ts`), k.excerpt.slice(-40));
     assert.ok(k.id.startsWith(`${addAll.id}-`));
   }
-  assert.equal(tally(c.result(), addAll).toConfirm, 45);
+  assert.equal(tally(c.result(), addAll).toJudge, 45);
 });
 
 test('a judged case is not waiting', () => {
@@ -442,7 +442,7 @@ test('two copies of one call are one case', () => {
   const events = (s: string) => [start(s), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A', { id: 'tu-x' })];
   const c = feed([...events('s1'), ...events('s2')], { A: [addAll] }, {}, unjudged);
   assert.equal(c.waiting().tool.flat().length, 1);
-  assert.equal(tally(c.result(), addAll).toConfirm, 1);
+  assert.equal(tally(c.result(), addAll).toJudge, 1);
 });
 
 test('after compaction and by depth, candidates count once decided', () => {
@@ -485,7 +485,7 @@ test("a judgment rule's share is over its decided cases: none leaves them", () =
   const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m a', at(1)), bash('git commit -m b', at(2)),
     bash(long, at(3)), bash('git commit -m d', at(4))], { A: [commit] }, {},
   inTurn([{ verdict: 'kept' }, { verdict: 'kept' }, { verdict: 'broken', quote: 'git commit -m' }, { verdict: 'none' }]));
-  assert.deepEqual(tally(data, commit), { status: 'judgment', applied: 3, broken: 1, judged: 4, toConfirm: 0 });
+  assert.deepEqual(tally(data, commit), { status: 'judgment', applied: 3, broken: 1, judged: 4, toJudge: 0 });
   assert.deepEqual(data.rules[0].evidence,
     [{ ...at(3), session: 's1', agent: null, text: `${`call Bash: ${long}`.slice(0, 200)}…`, quote: 'git commit -m' }]);
 });
@@ -512,6 +512,25 @@ test('a judgment rule is judged on 8 cases first: none applies, it stops there; 
   assert.equal(adds.waiting().tool.flat().length, 12);
 });
 
+test("each rule's cases waiting now, and the most every rule may still take", () => {
+  const minute = (i: number) => ({ at: `2026-11-02T1${Math.floor(i / 60)}:${String(i % 60).padStart(2, '0')}:00Z` });
+  const run = (r: Rule, n: number, command: (i: number) => string, verdicts: Verdict[]) => {
+    const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), ...Array.from({ length: n }, (_, i) => bash(command(i), minute(i)))],
+      { A: [r] }, {}, inTurn(verdicts));
+    return [data.rules[0].toJudge, data.toJudge, data.atMost];
+  };
+  const times = (n: number, verdict: Verdict['verdict']): Verdict[] => Array.from({ length: n }, () => ({ verdict }));
+  const commits = (i: number) => `git commit -m c${i}`;
+  // Stopped after 8 none: nothing now, nothing later.
+  assert.deepEqual(run(commit, 12, commits, times(8, 'none')), [0, 0, 0]);
+  // Still sampling: 3 of its 8 now; every case left if one applies.
+  assert.deepEqual(run(commit, 12, commits, times(5, 'none')), [3, 3, 7]);
+  // One applied: up to 20 decided now; up to 40 judged at most.
+  assert.deepEqual(run(commit, 30, commits, [{ verdict: 'kept' }]), [19, 19, 29]);
+  // A tool rule's candidates: all of them, past the 40 it lists.
+  assert.deepEqual(run(addAll, 50, (i) => `git add -A d${i}`, []), [50, 50, 50]);
+});
+
 test("the agent's own call, an edit to its memory, is no case of a judgment rule; a tool rule still checks it", () => {
   const edits = rule({ quote: 'say why in every edit', name: 'say why', kind: 'judgment', trigger: 'editing',
     check: { field: 'file_path', when: { tool: '^(Edit|Write)$', value: '.' } },
@@ -534,7 +553,7 @@ test('a judgment rule without cases is never a case', () => {
   const vague = rule({ quote: 'think before you act', name: 'think first', kind: 'judgment', trigger: 'always' });
   const c = feed([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git commit -m x'), reply(EN)], { A: [vague] }, {}, unjudged);
   assert.deepEqual(c.waiting().judgment, []);
-  assert.deepEqual(tally(c.result(), vague), { status: 'judgment', applied: 0, broken: 0, judged: 0, toConfirm: 0 });
+  assert.deepEqual(tally(c.result(), vague), { status: 'judgment', applied: 0, broken: 0, judged: 0, toJudge: 0 });
   assert.equal(c.result().rules[0].reason, 'no case to judge it on');
 });
 
@@ -542,7 +561,7 @@ test('two events that read alike are one case to judge', () => {
   const events = (s: string) => [start(s), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A')];
   const c = feed([...events('s1'), ...events('s2')], { A: [addAll] }, {}, unjudged);
   assert.equal(c.waiting().tool.flat().length, 1);
-  assert.equal(tally(c.result(), addAll).toConfirm, 2);
+  assert.equal(tally(c.result(), addAll).toJudge, 2);
 });
 
 test('one quote read two ways (with no cases, then with a when) is one rule, counted as first read', () => {
