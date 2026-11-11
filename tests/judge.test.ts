@@ -246,6 +246,10 @@ test("one isolated claude -p call per batch: the judge's model (haiku) and schem
   assert.equal(existsSync(call.cwd), false);
   assert.ok(call.stdin.startsWith('You judge whether a coding agent (Claude Code) followed rules'));
   assert.ok(call.stdin.includes('What the excerpt doesn\'t show is not shown broken'));
+  // An edit shows what it writes; the session's instructions are the user's words.
+  assert.ok(call.stdin.includes('for a file tool, the file, then what an edit writes after "writes:"'));
+  assert.ok(call.stdin.includes('or the instructions they set for the whole session (the first line)'));
+  assert.ok(!call.stdin.includes('the content of an edit'));
   assert.ok(call.stdin.includes('<rule id="1" from="git › commits">\ncommit only when asked\n<context>Commits are the user\'s call: '
     + 'commit only when asked, never on your own.</context>\n</rule>'), call.stdin);
   assert.ok(call.stdin.includes(`<case id="1" rule="1">\n${first.excerpt}\n</case>`));
@@ -365,7 +369,7 @@ test('nothing waiting, nothing selected', () => {
 });
 
 test('the labelled set: every case is well formed', () => {
-  assert.equal(LABELLED.length, 20);
+  assert.equal(LABELLED.length, 25);
   const list = labelled();
   for (const k of list) {
     const lines = k.excerpt.split('\n');
