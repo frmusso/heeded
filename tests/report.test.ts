@@ -8,7 +8,7 @@ const buckets = (counts: [number, number][]) => counts.map(([applied, broken], i
 
 const empty: Report = {
   folder: '/home/someone/repos/app', configDir: '/home/someone/.claude', from: null, to: null, sessions: 0, subagents: 0,
-  unrecognized: [], notRead: 0, toJudge: 0, toJudgeTokens: 0, atMost: 0, files: [], rules: [], byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]),
+  unrecognized: [], notRead: 0, toReread: 0, toJudge: 0, toJudgeTokens: 0, atMost: 0, files: [], rules: [], byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]),
 };
 
 test('the json document: heeded 2 first, then the report, two-space indented', () => {
@@ -28,7 +28,7 @@ test('the json document: heeded 2 first, then the report, two-space indented', (
   assert.ok(doc.startsWith('{\n  "heeded": 2,\n  "folder": "/home/someone/repos/app",\n  "configDir": '), doc);
   assert.ok(doc.endsWith('\n}\n'));
   assert.deepEqual(Object.keys(JSON.parse(doc)), ['heeded', 'folder', 'configDir', 'from', 'to', 'sessions', 'subagents',
-    'unrecognized', 'notRead', 'toJudge', 'toJudgeTokens', 'atMost', 'files', 'rules', 'byDepth']);
+    'unrecognized', 'notRead', 'toReread', 'toJudge', 'toJudgeTokens', 'atMost', 'files', 'rules', 'byDepth']);
   assert.deepEqual(JSON.parse(doc), { heeded: 2, ...report });
 });
 
@@ -169,6 +169,7 @@ test('nothing to read and no case waiting: the report says it is up to date, and
     + '  up to date: new sessions and changes to instruction files are read on the next run\n');
   assert.doesNotMatch(end({}), /up to date/);
   assert.doesNotMatch(end({ toJudge: 0, notRead: 2 }), /up to date/);
+  assert.doesNotMatch(end({ toJudge: 0, toReread: 2 }), /up to date/);
 });
 
 test('tokens as heeded says them', () => {
@@ -194,9 +195,10 @@ test('sessions without instruction files: one line', () => {
 });
 
 test('transcripts not recognized, and sections not read yet: one line each', () => {
-  const out = text({ ...sketch, unrecognized: ['a.jsonl', 'b.jsonl'], notRead: 14 }, options);
+  const out = text({ ...sketch, unrecognized: ['a.jsonl', 'b.jsonl'], notRead: 14, toReread: 3 }, options);
   assert.ok(out.endsWith('  1 rule no call or reply shows: heeded rules\n'
-    + '  14 sections not read yet: the rules in them aren\'t checked\n'
+    + '  14 sections not read yet: their rules aren\'t checked until heeded reads them\n'
+    + '  3 sections to read again: their rules from before count meanwhile\n'
     + '  9 cases waiting for the judge, ~31k tokens: run heeded again\n'
     + '  2 transcripts unrecognized: claude code may have changed its format\n'), out);
 });
@@ -258,9 +260,10 @@ test('heeded rules in colour: the marks', () => {
     listed.replace(/✓/g, '\x1b[32m✓\x1b[39m').replace('    · ', '    \x1b[2m·\x1b[22m ').replace('!', '\x1b[33m!\x1b[39m'));
 });
 
-test('heeded rules with sections not read yet says so', () => {
-  assert.ok(rules({ ...found, notRead: 2 }, { color: false, home: '/home/someone' })
-    .endsWith(`${listed}\n  2 sections not read yet: the rules in them aren't checked\n`));
+test('heeded rules with sections not read yet, or to read again, says so', () => {
+  assert.ok(rules({ ...found, notRead: 2, toReread: 1 }, { color: false, home: '/home/someone' })
+    .endsWith(`${listed}\n  2 sections not read yet: their rules aren't checked until heeded reads them\n`
+      + '  1 section to read again: its rules from before count meanwhile\n'));
 });
 
 test('heeded rules shows what a command carries is checked for', () => {

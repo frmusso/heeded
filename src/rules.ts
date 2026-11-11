@@ -8,15 +8,17 @@ import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
-const PROMPT_VERSION = 3;
+/** The extraction prompt's version: part of every cache key, so a new prompt reads every section again. */
+export const PROMPT_VERSION = 3;
 export const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
  * cached by. */
 export interface Section { path: string[]; text: string; hash: string }
 
-const hash = (path: string[], text: string) =>
-  createHash('sha256').update(JSON.stringify([PROMPT_VERSION, MODEL, path, text])).digest('hex');
+/** A section's key in the cache, under a version of the prompt. */
+export const sectionHash = (path: string[], text: string, version = PROMPT_VERSION) =>
+  createHash('sha256').update(JSON.stringify([version, MODEL, path, text])).digest('hex');
 
 export function sections(content: string): Section[] {
   const out: Section[] = [];
@@ -27,7 +29,7 @@ export function sections(content: string): Section[] {
   // A heading with nothing under it holds no rule: it is context for its subsections.
   const close = () => {
     const text = lines.join('\n').trim();
-    if (text && text !== heading) out.push({ path, text, hash: hash(path, text) });
+    if (text && text !== heading) out.push({ path, text, hash: sectionHash(path, text) });
   };
   let fence = ''; // the marker of the open code block: it closes with its own kind, at least as long
   for (const line of content.replace(/\r\n?/g, '\n').split('\n')) {
@@ -162,7 +164,9 @@ export function save(cacheDir: string, hash: string, rules: unknown[]) {
 export interface Pending { section: Section; identity: string; at: string }
 /** One version of a section: whether it was read itself, and when the version of it remembered as read last was in
  * effect (null: none was read). */
-export interface Version { section: Section; identity: string; read: boolean; readAt: string | null }
+/** A section as a file holds it: read under this prompt or not, when its version read last was in effect, and whether
+ * rules read before (another version of it, or the previous prompt) stand for it until it is read. */
+export interface Version { section: Section; identity: string; read: boolean; readAt: string | null; before: boolean }
 
 /** The same section across versions of its file: the file, the headings above it, its own heading, and which one of
  * that name it is when a file repeats a heading. */
@@ -175,12 +179,12 @@ function identity(path: string, s: Section, seen: Map<string, number>): string {
 
 const latest = (cacheDir: string) => join(cacheDir, 'heeded', 'latest');
 // Under the prompt's version and the model, like each section's hash: a new prompt reads every section again.
-const idHash = (id: string) => createHash('sha256').update(JSON.stringify([PROMPT_VERSION, MODEL, id])).digest('hex');
+const idHash = (id: string, version: number) => createHash('sha256').update(JSON.stringify([version, MODEL, id])).digest('hex');
 
 /** The version of a section read last, by the time it was in effect: the one older versions take their rules from. */
-function recall(cacheDir: string, id: string): { hash: string; at: string } | null {
+function recall(cacheDir: string, id: string, version = PROMPT_VERSION): { hash: string; at: string } | null {
   try {
-    const known = JSON.parse(readFileSync(join(latest(cacheDir), `${idHash(id)}.json`), 'utf8'));
+    const known = JSON.parse(readFileSync(join(latest(cacheDir), `${idHash(id, version)}.json`), 'utf8'));
     return typeof known?.hash === 'string' && typeof known.at === 'string' ? known : null;
   } catch {
     return null;
@@ -189,9 +193,9 @@ function recall(cacheDir: string, id: string): { hash: string; at: string } | nu
 
 /** Remembers a read version of a section, unless one in effect as late or later is remembered already: the cache is
  * shared by every folder and config dir, whose histories interleave. */
-export function remember(cacheDir: string, id: string, hash: string, at: string) {
-  const known = recall(cacheDir, id);
-  if (!known || at > known.at) write(latest(cacheDir), idHash(id), { hash, at });
+export function remember(cacheDir: string, id: string, hash: string, at: string, version = PROMPT_VERSION) {
+  const known = recall(cacheDir, id, version);
+  if (!known || at > known.at) write(latest(cacheDir), idHash(id, version), { hash, at });
 }
 
 /**
@@ -214,8 +218,15 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
         const id = identity(file.path, section, names);
         const known = recall(cacheDir, id);
         let raw = load(cacheDir, section.hash);
-        found.versions.push({ section, identity: id, read: raw !== null, readAt: known?.at ?? null });
+        const read = raw !== null;
         if (raw === null && known) raw = load(cacheDir, known.hash);
+        // Read under the previous prompt only: those rules stand until the section is read under this one. One step
+        // back: a prompt older than that is read again from nothing.
+        if (raw === null) {
+          const older = recall(cacheDir, id, PROMPT_VERSION - 1);
+          raw = load(cacheDir, sectionHash(section.path, section.text, PROMPT_VERSION - 1)) ?? (older && load(cacheDir, older.hash));
+        }
+        found.versions.push({ section, identity: id, read, readAt: known?.at ?? null, before: !read && raw !== null });
         for (const r of raw ?? []) {
           const rule = verify(r, section);
           if (rule) found.rules.push({ ...rule, file: file.path });

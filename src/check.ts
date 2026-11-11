@@ -221,6 +221,8 @@ export interface Data {
   files: string[];
   /** Sections whose rules were never read: they can't be checked until they are. */
   notRead: number;
+  /** Sections to read again (edited since, or read with an older prompt): their rules from before count meanwhile. */
+  toReread: number;
   /** The cases a judge would read now. */
   toJudge: number;
   /** The cases every rule may still take, if each went on applying: its sample grows as its cases apply. */
@@ -382,9 +384,11 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
    * The sections to read: of each section, the version in effect latest when it wasn't read, unless a version of it
    * read already was in effect as late. The others take that version's rules meanwhile.
    */
+  function unread() {
+    return latest().filter((v) => !v.read && (v.readAt === null || v.at > v.readAt));
+  }
   function pending(): Pending[] {
-    return latest().filter((v) => !v.read && (v.readAt === null || v.at > v.readAt))
-      .map(({ section, identity, at }) => ({ section, identity, at }));
+    return unread().map(({ section, identity, at }) => ({ section, identity, at }));
   }
 
   /** The versions read, with when they were last in effect: what the cache remembers moves forward with them. */
@@ -523,7 +527,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           sum[i].broken += c.broken;
         });
       }
-      return { from, to, sessions, subagents, files: [...files], notRead: new Set(pending().map((p) => p.section.hash)).size,
+      // Sections by their text: a worktree's copy of a file is one section to read.
+      const sections = (before: boolean) => new Set(unread().filter((v) => v.before === before).map((v) => v.section.hash)).size;
+      return { from, to, sessions, subagents, files: [...files], notRead: sections(false), toReread: sections(true),
         toJudge: rules.reduce((n, r) => n + r.toJudge, 0), atMost: [...tallies.values()].reduce((n, t) => n + most(t), 0),
         rules, byDepth: buckets(sum) };
     },

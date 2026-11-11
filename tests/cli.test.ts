@@ -253,7 +253,8 @@ test('an edited section is asked about again; until it is read, its rules from b
   save(s.cacheDir, sections(content)[0].hash, [gitAdd]);
   remember(s.cacheDir, JSON.stringify([join(repo, 'CLAUDE.md'), [], '']), sections(content)[0].hash, '');
   const before = JSON.parse((await heeded(['--json'])).out);
-  assert.equal(before.notRead, 1);
+  // Edited: to read again, its rules from before counting meanwhile.
+  assert.deepEqual([before.notRead, before.toReread], [0, 1]);
   // The candidates each rule found: none is judged here.
   const candidates = (doc: { rules: { name: string; toJudge: number }[] }) => doc.rules.map((r) => [r.name, r.toJudge]).sort();
   assert.deepEqual(candidates(before), [['never git add -A', 2]]);
@@ -267,7 +268,7 @@ test('an edited section is asked about again; until it is read, its rules from b
   const after = JSON.parse((await heeded(['--json'], { terminal: true,
     env: { FAKE_CLAUDE_REPLY: JSON.stringify([{ stdout: both }, { stdout: nothing }]) } })).out);
   assert.equal(calls(), 2); // one to read, one to judge
-  assert.equal(after.notRead, 0);
+  assert.deepEqual([after.notRead, after.toReread], [0, 0]);
   assert.deepEqual(candidates(after), [['never force-push', 1], ['never git add -A', 2]]);
 });
 

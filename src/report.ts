@@ -6,10 +6,10 @@ import { BUDGET } from './judge.ts';
 export interface Report extends Data { folder: string; configDir: string; unrecognized: string[]; toJudgeTokens: number }
 
 export function json(r: Report): string {
-  const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, toJudgeTokens, atMost, files, rules,
-    byDepth } = r;
-  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge,
-    toJudgeTokens, atMost, files, rules, byDepth }, null, 2)}\n`;
+  const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toReread, toJudge, toJudgeTokens, atMost,
+    files, rules, byDepth } = r;
+  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toReread,
+    toJudge, toJudgeTokens, atMost, files, rules, byDepth }, null, 2)}\n`;
 }
 
 interface TextOptions { columns: number; color: boolean; now: Date; home: string }
@@ -21,7 +21,12 @@ const plural = (n: number, word: string) => `${thousands(n)} ${word}${n === 1 ? 
 const cut = (s: string, width: number) => (s.length > width ? `${s.slice(0, width - 1)}…` : s);
 const tilde = (path: string, home: string) => (path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path);
 const paint = (color: boolean, code: number, off: number, s: string) => (color ? `\x1b[${code}m${s}\x1b[${off}m` : s);
-const notRead = (n: number) => `  ${plural(n, 'section')} not read yet: the rules in them aren't checked`;
+/** The sections to read, never read (their rules unchecked) or to read again (their rules from before count). */
+const toRead = (r: Data) => [
+  ...(r.notRead ? [`  ${plural(r.notRead, 'section')} not read yet: their rules aren't checked until heeded reads them`] : []),
+  ...(r.toReread ? [`  ${plural(r.toReread, 'section')} to read again: ${r.toReread === 1 ? 'its rules' : 'their rules'} from before`
+    + ' count meanwhile'] : []),
+];
 
 /** Tokens as heeded says them: ~106k, ~1.1M. */
 export const approx = (tokens: number) =>
@@ -127,10 +132,11 @@ export function text(r: Report, o: TextOptions): string {
   const todo = r.toJudgeTokens > BUDGET ? `heeded judges ${approx(BUDGET)} a run, heeded --all all of them` : 'run heeded again';
   const end = [
     ...(aside ? [`  ${aside}: heeded rules`] : []),
-    ...(r.notRead ? [notRead(r.notRead)] : []),
+    ...toRead(r),
     ...(r.toJudge ? [`  ${plural(r.toJudge, 'case')} waiting for the judge, ${approx(r.toJudgeTokens)} tokens: ${todo}`] : []),
     // Nothing a run could read or judge: said, or a user can't tell a finished report from one with work left.
-    ...(r.notRead || r.toJudge ? [] : ['  up to date: new sessions and changes to instruction files are read on the next run']),
+    ...(r.notRead || r.toReread || r.toJudge ? []
+      : ['  up to date: new sessions and changes to instruction files are read on the next run']),
     ...unrecognized,
   ];
   return out([[header, counts], rules, depth, end]);
@@ -173,6 +179,6 @@ export function rules(r: Report, o: { color: boolean; home: string }): string {
       lines.push(`    ${mark} ${x.name.padEnd(width + 2)}${how(x)}`);
     }
   }
-  if (r.notRead) lines.push('', notRead(r.notRead));
+  if (r.notRead || r.toReread) lines.push('', ...toRead(r));
   return `${lines.join('\n')}\n`;
 }

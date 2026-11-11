@@ -312,8 +312,10 @@ test('the totals: sections not read yet, the files measured, sessions and subage
     bash('ls', { at: '2026-11-03T10:00:00Z' }), start('s1', 'x1'), files({ '/r/CLAUDE.local.md': 'M' }),
     reply('ok', { at: '2026-11-01T09:00:00Z' }), start('s1', 'x2'), start('s2'), bash('ls', { at: '2026-11-05T08:00:00Z' }),
     start('s3'), files({ '/r/CLAUDE.md': 'A' })],
-  { A: [addAll] }, { M: missing.map((section) => ({ section, identity: section.hash, read: false, readAt: null })) });
-  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 2, toJudge: 0, atMost: 0,
+  { A: [addAll] }, { M: missing.map((section, i) => ({ section, identity: section.hash, read: false, readAt: null, before: i === 1 })) });
+  // One section never read (its rules unchecked), one to read again (its rules from before count).
+  assert.deepEqual({ ...data, rules: undefined, byDepth: undefined }, { rules: undefined, byDepth: undefined, notRead: 1, toReread: 1,
+    toJudge: 0, atMost: 0,
     files: ['/r/CLAUDE.md', '/r/CLAUDE.local.md', '/r/sub/CLAUDE.md'], sessions: 2, subagents: 1,
     from: '2026-11-01T09:00:00Z', to: '2026-11-05T08:00:00Z' });
 });
@@ -339,8 +341,9 @@ test('a quoted block is not the reply: an Italian reply quoting a long English p
 });
 
 // Which sections to ask about: per section, the version in effect latest, unless it was read or a later one was.
+// A version not read with a version of it read before takes that one's rules, as the cache gives them.
 const version = (text: string, identity: string, readAt: string | null = null, read = false): Version =>
-  ({ section: { path: [], text, hash: text }, identity, read, readAt });
+  ({ section: { path: [], text, hash: text }, identity, read, readAt, before: !read && readAt !== null });
 const unread = version;
 function asked(events: Event[], versionsBy: Record<string, Version[]>) {
   const c = counter((f) => ({ rules: [], versions: versionsBy[f.content] ?? [] }));

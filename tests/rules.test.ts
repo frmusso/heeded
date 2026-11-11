@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { load, remember, rulesOf, save, sections, verify } from '../src/rules.ts';
+import { load, PROMPT_VERSION, remember, rulesOf, save, sectionHash, sections, verify } from '../src/rules.ts';
 import { sandbox } from './support/sandbox.ts';
 
 const shape = (content: string) => sections(content).map(({ path, text }) => ({ path, text }));
@@ -188,8 +188,8 @@ test("a file's rules: its cached sections give rules, the others are unread; mem
   const a = of({ path: '/a/CLAUDE.md', type: 'Project', content });
   // Each rule knows the file it was read from: a scoped rule is told by where it is written.
   assert.deepEqual(a, { rules: [{ ...verify(gitAdd, section), file: '/a/CLAUDE.md' }], versions: [
-    { section, identity: JSON.stringify(['/a/CLAUDE.md', [], '## git']), read: true, readAt: null },
-    { section: other, identity: JSON.stringify(['/a/CLAUDE.md', [], '## other']), read: false, readAt: null }] });
+    { section, identity: JSON.stringify(['/a/CLAUDE.md', [], '## git']), read: true, readAt: null, before: false },
+    { section: other, identity: JSON.stringify(['/a/CLAUDE.md', [], '## other']), read: false, readAt: null, before: false }] });
   assert.equal(of({ path: '/a/CLAUDE.md', type: 'Project', content }), a);
   assert.deepEqual(of({ path: '/b/CLAUDE.md', type: 'Project', content })!.rules, [{ ...a!.rules[0], file: '/b/CLAUDE.md' }]);
   assert.equal(of({ path: '/m/MEMORY.md', type: 'AutoMem', content }), null);
@@ -224,7 +224,8 @@ test('a version not read takes the rules of the remembered version of its sectio
   assert.deepEqual(found.rules.map((r) => r.quote), ['never `git add -A`']);
   assert.deepEqual(found.versions.map((u) => u.readAt), ['2026-11-05T10:00:00Z']);
   assert.deepEqual(rulesOf(s.cacheDir)({ path: '/other/CLAUDE.md', type: 'Project', content: v1 }), { rules: [],
-    versions: [{ section: sections(v1)[0], identity: JSON.stringify(['/other/CLAUDE.md', [], '## git']), read: false, readAt: null }] });
+    versions: [{ section: sections(v1)[0], identity: JSON.stringify(['/other/CLAUDE.md', [], '## git']), read: false, readAt: null,
+      before: false }] });
 });
 
 test('the remembered version of a section only moves forward in time', () => {
@@ -254,6 +255,39 @@ test('what the cache remembers belongs to one prompt and model: readings from an
   assert.deepEqual([found.rules, found.versions.map((u) => u.readAt)], [[], [null]]);
   remember(s.cacheDir, id, later.hash, '');
   assert.deepEqual(rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v1 })!.versions.map((u) => u.readAt), ['']);
+});
+
+test('a section read only under the previous prompt keeps those rules, to be read again; read under this one, its new rules win', () => {
+  const s = sandbox();
+  const [later] = sections(v2);
+  const file = { path: '/r/CLAUDE.md', type: 'Project', content: later.text };
+  save(s.cacheDir, sectionHash(later.path, later.text, PROMPT_VERSION - 1), [rule('never force-push')]);
+  const before = rulesOf(s.cacheDir)(file)!;
+  assert.deepEqual(before.rules.map((r) => r.quote), ['never force-push']);
+  assert.deepEqual(before.versions.map((v) => [v.read, v.before]), [[false, true]]);
+  save(s.cacheDir, later.hash, [rule('never `git add -A`')]);
+  const now = rulesOf(s.cacheDir)(file)!;
+  assert.deepEqual(now.rules.map((r) => r.quote), ['never `git add -A`']);
+  assert.deepEqual(now.versions.map((v) => [v.read, v.before]), [[true, false]]);
+});
+
+test('an edited section, read under the previous prompt in an earlier version, keeps that version\'s rules where their words are', () => {
+  const s = sandbox();
+  const [earlier] = sections(v1);
+  const old = sectionHash(earlier.path, earlier.text, PROMPT_VERSION - 1);
+  save(s.cacheDir, old, [rule('never `git add -A`'), rule('never rebase')]);
+  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), old, '2026-11-01T10:00:00Z', PROMPT_VERSION - 1);
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v2 })!;
+  assert.deepEqual(found.rules.map((r) => r.quote), ['never `git add -A`']);
+  assert.deepEqual(found.versions.map((v) => [v.read, v.before, v.readAt]), [[false, true, null]]);
+});
+
+test('two prompts back, nothing is kept: the section is read from nothing', () => {
+  const s = sandbox();
+  const [later] = sections(v2);
+  save(s.cacheDir, sectionHash(later.path, later.text, PROMPT_VERSION - 2), [rule('never force-push')]);
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: later.text })!;
+  assert.deepEqual([found.rules, found.versions.map((v) => v.before)], [[], [false]]);
 });
 
 test('two sections with the same heading in one file are two sections', () => {
