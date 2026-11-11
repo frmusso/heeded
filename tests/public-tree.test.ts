@@ -53,6 +53,10 @@ test("a developer's own words come from the git common dir, never from the repos
   execFileSync('git', ['init', '-q', repo]);
   writeFileSync(join(repo, '.git', 'info', 'public-tree-words'), '# names only this copy knows\nacme-secret-name\n\n');
   assert.deepEqual(hits('// see Acme-Secret-Name', rules(repo)), ['local']);
+  // More files beside it, public-tree-words-<anything>: words shared with other projects, and this one's own.
+  writeFileSync(join(repo, '.git', 'info', 'public-tree-words-project'), 'other-private-project\n');
+  assert.deepEqual(hits('// see other-private-project', rules(repo)), ['local']);
+  assert.deepEqual(hits('// see acme-secret-name', rules(repo)), ['local']);
   const plain = mkdtempSync(join(tmpdir(), 'heeded-nogit-'));
   assert.deepEqual(hits('// see acme-secret-name', rules(plain)), []);
   rmSync(repo, { recursive: true });

@@ -3,7 +3,7 @@
 //
 //   node scripts/public-tree.ts    one `file:line rule text` per hit; exits 1 on any
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 interface Rule { id: string; re: RegExp }
@@ -38,17 +38,20 @@ export function hits(line: string, rules: Rule[]): string[] {
   return rules.filter((r) => r.re.test(line)).map((r) => r.id);
 }
 
-/** RULES, plus the words only a developer's own copy knows (their names, accounts, home paths) as the `local` rule: one
- * expression per line, `#` for comments, in the git common dir's `info/public-tree-words`, never in the repository. */
+/** RULES, plus the words only a developer's own copy knows (their names, accounts, home paths, other projects) as the
+ * `local` rule: one expression per line, `#` for comments, in the git common dir's `info/public-tree-words` and any
+ * `info/public-tree-words-*` beside it (a list shared with other projects, and this one's own), never in the
+ * repository. */
 export function rules(root: string): Rule[] {
   let words: string[];
   try {
-    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    words = readFileSync(join(common, 'info', 'public-tree-words'), 'utf8').split('\n').map((l) => l.trim())
+    const info = join(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'info');
+    words = readdirSync(info).filter((f) => /^public-tree-words(-.+)?$/.test(f))
+      .flatMap((f) => readFileSync(join(info, f), 'utf8').split('\n')).map((l) => l.trim())
       .filter((l) => l && !l.startsWith('#'));
   } catch {
-    return RULES; // no git, or no words file: a fresh clone
+    return RULES; // no git, or no info folder
   }
   return words.length ? [...RULES, { id: 'local', re: new RegExp(words.join('|'), 'i') }] : RULES;
 }
