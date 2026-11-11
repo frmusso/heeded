@@ -448,6 +448,22 @@ test('the selection stops at the budget', () => {
   assert.deepEqual(select([list], [], estimate(list.slice(0, 2)).tokens), list.slice(0, 2));
 });
 
+test("a case taken brings the other rules' cases on its excerpt: they cost a rule and a verdict, so a run judges more", () => {
+  const ex = (c: string) => `you: x\ncall Bash: ${c.repeat(10_000)}`;
+  const j2 = judged('never deploy on fridays');
+  const day = (d: number) => `2026-11-0${d}T10:00:00Z`;
+  const [c1, c2] = [{ ...on(j1, ex('a'), 'e1'), at: day(5) }, { ...on(j1, ex('b'), 'e2'), at: day(4) }];
+  const [d1, d2] = [{ ...on(j2, ex('c'), 'e3'), at: day(3) }, { ...on(j2, ex('a'), 'e1'), at: day(2) }];
+  // Without them, the run would stop after c1 and d1: c2's excerpt doesn't fit.
+  const budget = estimate([c1, d1]).tokens + 500;
+  const ids = (list: Case[]) => list.map((c) => c.id);
+  assert.deepEqual(ids(select([], [[c1, c2], [d1, d2]], budget)), ids([c1, d2, d1]));
+  assert.deepEqual(ids(select([], [[c1, c2], [d1, d2]], Infinity)), ids([c1, d2, d1, c2]));
+  // A tool candidate and a judgment case on one event share it too.
+  const t = { ...on(t1, ex('a'), 'e1'), at: day(1) };
+  assert.deepEqual(ids(select([[t]], [[c1, c2]], Infinity)), ids([t, c1, c2]));
+});
+
 test('nothing waiting, nothing selected', () => {
   assert.deepEqual(select([], [], 150_000), []);
 });

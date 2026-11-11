@@ -321,19 +321,31 @@ export function estimate(cases: Case[]): { calls: number; tokens: number } {
 /**
  * The cases a run judges within `budget`, from each rule's cases waiting, latest first: tool candidates first, then
  * judgment rules' cases; in each, one case of every rule in turn, the rule with the latest case first, so every rule
- * gets some. It stops at the first case the budget can't take.
+ * gets some. A case taken brings the other rules' cases waiting on its excerpt: they add a rule and a verdict to a
+ * call, not an excerpt. It stops at the first case the budget can't take.
  */
 export function select(tool: Case[][], judgment: Case[][], budget: number): Case[] {
   const picked: Case[] = [];
+  const taken = new Set<string>();
+  const onExcerpt = new Map<string, Case[]>();
+  for (const c of [...tool, ...judgment].flat()) {
+    const same = onExcerpt.get(keyOf(c));
+    if (same) same.push(c);
+    else onExcerpt.set(keyOf(c), [c]);
+  }
   for (const group of [tool, judgment]) {
     const lists = group.filter((l) => l.length)
       .toSorted((a, b) => (a[0].at === b[0].at ? (a[0].rule.id < b[0].rule.id ? -1 : 1) : a[0].at > b[0].at ? -1 : 1));
     for (let i = 0; lists.some((l) => i < l.length); i++) {
       for (const l of lists) {
-        if (i >= l.length) continue;
-        // Without a budget, no estimate: built over every case picked so far, it would cost the square of their number.
-        if (budget < Infinity && estimate([...picked, l[i]]).tokens > budget) return picked;
-        picked.push(l[i]);
+        if (i >= l.length || taken.has(l[i].id)) continue;
+        for (const c of [l[i], ...onExcerpt.get(keyOf(l[i]))!]) {
+          if (taken.has(c.id)) continue;
+          // Without a budget, no estimate: over every case picked so far, it would cost the square of their number.
+          if (budget < Infinity && estimate([...picked, c]).tokens > budget) return picked;
+          picked.push(c);
+          taken.add(c.id);
+        }
       }
     }
   }
