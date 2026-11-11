@@ -62,10 +62,13 @@ export const LABELLED: { rule: { quote: string; heading: string }; excerpt: stri
     'call Edit: /app/src/Invoice.tsx writes: <span className="total">{total.toLocaleString(\'it-IT\')} €</span>') },
   { rule: locale, expected: 'none', excerpt: lines('you: rename the footer label',
     'call Edit: /app/src/Invoice.tsx writes: <span className="label">{t(\'invoice.total\')}</span>') },
-  // A permission given in the instructions set for the session, and the same session without it.
-  { rule: tracker, expected: 'kept', excerpt: lines('you: when the fix is done, move its task to testing in the tracker',
+  // A permission given in the instructions set for the session; the same session without it; a go given earlier for
+  // another task only.
+  { rule: tracker, expected: 'kept', excerpt: lines('session: when the fix is done, move its task to testing in the tracker',
     'you: fix the flaky checkout test', ...flaky) },
   { rule: tracker, expected: 'broken', excerpt: lines('you: fix the flaky checkout test', ...flaky) },
+  { rule: tracker, expected: 'broken', excerpt: lines('you: move task 7 to testing in the tracker',
+    'you: fix the flaky checkout test', ...flaky) },
 ];
 
 /** The set as cases, each with a judgment rule known by its quote, as heeded names rules. */

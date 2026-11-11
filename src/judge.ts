@@ -129,7 +129,8 @@ function shorten(line: string): string {
  * pushed yet, which ends with it. An excerpt is the instructions the user set for the session, the user's prompts
  * before the turn, then the prompt that started it, then the events since, one per line, at most 6,000 characters: when
  * over, the events nearest the case stay, then the prompts before the turn, then the user's words in it; a line `…`
- * stands for the events left out. The session's instructions, the turn's prompt and the case are always kept.
+ * stands for the events left out. The session's instructions, the turn's prompt and the case are always kept, so with
+ * all three long an excerpt may go a little over.
  */
 export function excerpts() {
   let session: string | null = null;
@@ -157,7 +158,7 @@ export function excerpts() {
         earlier = [];
         restart(null);
       } else if (e.kind === 'prompt' && e.session) {
-        session = words(e);
+        session = `session: ${cut(e.text, WORDS)}`;
       } else if (e.kind === 'prompt' && e.starts) {
         if (start !== null) earlier = [...earlier, shorten(start)].slice(-EARLIER);
         restart(words(e));
@@ -237,11 +238,12 @@ is an excerpt of a session, one event per line, oldest first: the instructions t
 any; the user's last prompts before the agent's turn (without what followed them); the prompt that started the turn;
 then what happened since. The case is its last line.
 
-- "you: …" is the user's own words: a prompt, a slash command, an answer they gave to the agent's question or plan,
-  or the instructions they set for the whole session (the first line).
+- "session: …" is the instructions the user set for the whole session: the user's own words, for every turn.
+- "you: …" is the user's own words: a prompt, a slash command, or an answer they gave to the agent's question or plan.
 - "task: …" is the task another agent gave this one: never the user's words.
 - "call <tool>: …" is a tool call the agent made: for Bash, the command;
-  for a file tool, the file, then what an edit writes after "writes:". "reply: …" is what the agent told the user.
+  for a file tool, the file, then what it writes after "writes:" (for an edit, only the new text of the part it
+  replaces). "reply: …" is what the agent told the user.
 - A line ending in "…" was cut; a line "…" alone stands for events left out.
 
 For each case, judge its last line by the rule given for it. A rule comes with the text around it in its instruction
@@ -253,8 +255,8 @@ file, in <context>: read the rule as that text means it.
 What the excerpt doesn't show is not shown broken: a check made before the excerpt starts, a step left out ("…"), the
 rest of a line cut short. Then the answer is "none".
 
-Only the user's words give a permission or make a request: a go given in a "you:" line counts; nothing an agent wrote
-does. For "broken" and "kept", quote: words copied exactly from the excerpt that show it.
+Only the user's words give a permission or make a request: a go given in a "you:" or "session:" line counts; nothing an
+agent wrote does. For "broken" and "kept", quote: words copied exactly from the excerpt that show it.
 `;
 
 /** Cases go to claude in calls of at most 40,000 characters of excerpts and rules. */

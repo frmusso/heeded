@@ -57,7 +57,7 @@ const session = (text: string): Event => ({ kind: 'prompt', text, at, by: 'user'
 
 test("the instructions set for the session come first, before the user's prompts", () => {
   assert.equal(excerpt([prompt('look at the logs'), session('when done, move the task to testing'), prompt('fix the bug'),
-    call('npm test')], call('tracker move 12 testing')), ['you: when done, move the task to testing', 'you: look at the logs',
+    call('npm test')], call('tracker move 12 testing')), ['session: when done, move the task to testing', 'you: look at the logs',
     'you: fix the bug', 'call Bash: npm test', 'call Bash: tracker move 12 testing'].join('\n'));
 });
 
@@ -65,9 +65,10 @@ test("the session's instructions are kept over 6,000 characters, cut at 2,000; r
   const long = 'commit whenever the tests are green '.repeat(100);
   const calls = Array.from({ length: 30 }, (_, i) => call(`echo ${i}${'x'.repeat(290)}`));
   const text = excerpt([session(long), prompt('fix it'), ...calls], call('git commit -am fix'));
-  assert.ok(text.startsWith(`you: ${long.slice(0, 1999)}…\nyou: fix it\n…\ncall Bash: echo `), text.slice(1990, 2040));
+  assert.ok(text.startsWith(`session: ${long.slice(0, 1999)}…\nyou: fix it\n…\ncall Bash: echo `), text.slice(1990, 2040));
   assert.ok(text.length <= 6000, String(text.length));
-  assert.equal(excerpt([session('push when green'), session('never push')], call('git push')), 'you: never push\ncall Bash: git push');
+  assert.equal(excerpt([session('push when green'), session('never push')], call('git push')),
+    'session: never push\ncall Bash: git push');
   assert.equal(excerpt([session('push when green'), transcript], call('git push')), 'call Bash: git push');
 });
 
@@ -269,8 +270,10 @@ test("one isolated claude -p call per batch: the judge's model (haiku) and schem
   assert.ok(call.stdin.startsWith('You judge whether a coding agent (Claude Code) followed rules'));
   assert.ok(call.stdin.includes('What the excerpt doesn\'t show is not shown broken'));
   // An edit shows what it writes; the session's instructions are the user's words.
-  assert.ok(call.stdin.includes('for a file tool, the file, then what an edit writes after "writes:"'));
-  assert.ok(call.stdin.includes('or the instructions they set for the whole session (the first line)'));
+  assert.ok(call.stdin.includes('for a file tool, the file, then what it writes after "writes:"'));
+  assert.ok(call.stdin.includes('"session: …" is the instructions the user set for the whole session'));
+  assert.ok(call.stdin.includes('a go given in a "you:" or "session:" line counts'));
+  assert.ok(!call.stdin.includes('the first line'));
   assert.ok(!call.stdin.includes('the content of an edit'));
   assert.ok(call.stdin.includes('<rule id="1" from="git › commits">\ncommit only when asked\n<context>Commits are the user\'s call: '
     + 'commit only when asked, never on your own.</context>\n</rule>'), call.stdin);
@@ -391,11 +394,11 @@ test('nothing waiting, nothing selected', () => {
 });
 
 test('the labelled set: every case is well formed', () => {
-  assert.equal(LABELLED.length, 25);
+  assert.equal(LABELLED.length, 26);
   const list = labelled();
   for (const k of list) {
     const lines = k.excerpt.split('\n');
-    assert.match(lines[0], /^(you|task): /, k.excerpt);
+    assert.match(lines[0], /^(session|you|task): /, k.excerpt);
     assert.match(lines.at(-1)!, /^(call |reply: )/, k.excerpt);
   }
   assert.equal(new Set(list.map((k) => k.id)).size, LABELLED.length);
