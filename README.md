@@ -12,16 +12,16 @@ $ npx heeded
   3 files · 41 rules · 12 checked · 29 need a judge
 
   CLAUDE.md
-    ✗ never git add -A    kept 95% of 214            broken 9×    last 2 days ago
+    ✗ :12  never git add -A    kept 95% of 214            broken 9×    last 2 days ago
         nov 8   19df6c20  git add -A && git commit -m "fix: …"
         nov 2   8c0e8fab  git add -A
-    ✓ never force-push    kept 100% of 61
-    ○ use pnpm, not npm   never applied              ~40 tokens every session
-    · failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
+    ✓ :14  never force-push    kept 100% of 61
+    ○ :21  use pnpm, not npm   never applied              ~40 tokens every session
+    · :30  failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
   ~/.claude/CLAUDE.md
-    ✗ answer in italian   kept 96% of 3,812          broken 152×  last today
+    ✗ :3   answer in italian   kept 96% of 3,812          broken 152×  last today
         after compaction kept 69% of 410
-    ○ ask before deploys  never applied in 8 judged  ~30 tokens every session
+    ○ :17  ask before deploys  never applied in 8 judged  ~30 tokens every session
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                              98%        97%        91%     84%
@@ -44,6 +44,8 @@ $ npx heeded
 - `after compaction`: the same rule, counted only after claude code compacted the context.
 - each rule is under the file it is written in: the folder's files first, then the others (`~/.claude/CLAUDE.md` is
   loaded in every project, so a rule there can be never applied here and needed elsewhere).
+- `:12`: the line the rule starts on in that file, as the file is now. no number: its words aren't in the file any
+  more.
 - `kept by context depth`: every rule together, by how full the context was at the time.
 - `never applied in 8 judged`: none of the 8 cases the judge read was about the rule.
 - `rules no call or reply shows`: rules about how to work ("plan before coding"), which no single call or reply can
@@ -71,9 +73,9 @@ needs node 22 or later and claude code, signed in: heeded calls your own `claude
    `y` reads the rules, judges a first round of cases and prints the report. enter spends nothing: the report shows
    what is already cached, on a first run the sessions found and the sections still to read.
 
-3. **act on the report.** a rule broken often may need rewriting, or saying why it matters. a rule never applied
-   costs its tokens in every session: move it to the project it's for, or remove it. `heeded rules` shows how each
-   rule is checked, and the ones no call or reply can show.
+3. **act on the report.** each rule is under its file, with its line (`:12`). a rule broken often may need
+   rewriting, or saying why it matters. a rule never applied costs its tokens in every session: move it to the project
+   it's for, or remove it. `heeded rules` shows how each rule is checked, and the ones no call or reply can show.
 
 4. **run it again** whenever you like: after more sessions, or after editing an instruction file. every run reads the
    transcripts again, for free, and asks only when something new costs tokens. what was read or judged is cached and
@@ -106,8 +108,8 @@ to type `heeded` instead of `npx heeded`, install it: `npm install -g heeded`.
    itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. each
    verdict is cached. a rule the judge decides is tried on 8 of its cases first: if none is about it, it stops there;
    if some are, it goes on to 20 cases that applied, or 40 judged. up to 3 calls run at once.
-5. **report.** each rule under its file: kept, broken with the evidence, never applied; by context depth and after
-   compaction.
+5. **report.** each rule under its file, at its line in the file as it is now: kept, broken with the evidence, never
+   applied; by context depth and after compaction.
 
 steps 2 and 4 cost tokens: heeded asks once, before spending anything. a run judges within 150k tokens and nothing is
 paid for twice, so coverage grows run after run. `heeded --all` goes to the end instead: its question shows what waits
@@ -122,11 +124,11 @@ $ npx heeded rules
   ~/repos/app · 1 file · 5 rules
 
   CLAUDE.md
-    ✓ never git add -A           Bash command  when (^|\s)git\s+add(\s|$)  broken \s(-A|--all)\b
-    ✓ answer in italian          language it
-    · commit only when asked     judged on Bash command  when (^|\s)git\s+commit(\s|$)
-    · say what you changed       judged on replies
-    ! never kill the dev server  failed its examples: keeps "pkill -f vite-test"
+    ✓ :8   never git add -A           Bash command  when (^|\s)git\s+add(\s|$)  broken \s(-A|--all)\b
+    ✓ :12  answer in italian          language it
+    · :15  commit only when asked     judged on Bash command  when (^|\s)git\s+commit(\s|$)
+    · :19  say what you changed       judged on replies
+    ! :23  never kill the dev server  failed its examples: keeps "pkill -f vite-test"
 ```
 
 `✓` a pattern decides it: `when` picks the calls it applies to, `broken` the ones that break it. `·` the judge
