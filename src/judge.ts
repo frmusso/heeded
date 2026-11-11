@@ -2,7 +2,7 @@
 // and their verdicts.
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { Event } from './claude-code.ts';
 import { ask, batches } from './model.ts';
 import { redact } from './redact.ts';
@@ -87,16 +87,24 @@ function cut(text: string, limit: number): string {
   return render(start, limit, start.length === text.length);
 }
 
+/** Files that hold secrets by their name: environment files, keys and certificates, credentials. Short passwords and
+ * connection strings escape every secret pattern, so what is written to these is never shown. */
+const SECRETS = /^(?:\.env.*|\.npmrc|\.netrc|\.pgpass|id_(?:rsa|ecdsa|ed25519)|.*\.(?:pem|key|p12|pfx))$|secret|credential/i;
+
 /**
- * A line's prefix and what it shows: a call its command, else its file and what it writes there, else its whole input.
- * Only the start of a write is kept: as much as `head()` looks at, so a large file is never copied for each event.
+ * A line's prefix and what it shows: a call its command, else its file and what it writes there (unless the file holds
+ * secrets), else its whole input. Only the start of a write is kept: as much as `head()` looks at, so a large file is
+ * never copied for each event.
  */
 function parts(e: Seen): [string, string] {
   if (e.kind === 'reply') return ['reply: ', e.text];
+  const prefix = `call ${e.tool}: `;
   const { command, file_path, new_string, content } = e.input;
+  if (typeof command === 'string') return [prefix, command];
+  if (typeof file_path !== 'string') return [prefix, JSON.stringify(e.input)];
   const written = typeof new_string === 'string' ? new_string : content;
-  return [`call ${e.tool}: `, typeof command === 'string' ? command : typeof file_path !== 'string' ? JSON.stringify(e.input)
-    : typeof written === 'string' ? `${file_path} writes: ${written.slice(0, WORDS + 201)}` : file_path];
+  if (typeof written !== 'string' || SECRETS.test(basename(file_path))) return [prefix, file_path];
+  return [prefix, `${file_path} writes: ${written.slice(0, WORDS + 201)}`];
 }
 
 function line(e: Seen, limit: number): string {

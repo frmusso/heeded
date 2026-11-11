@@ -123,11 +123,23 @@ test("a line cut before it renders is marked cut: indented code, or a token too 
     'call Write: /r/a.min.js writes:…');
 });
 
+test('a file named for secrets shows its path, never what is written to it', () => {
+  // Short passwords and a connection string: no secret pattern finds them, so the file's name must.
+  const content = 'DATABASE_URL=postgres://app:hunter2secret@db.internal:5432/app\nPASSWORD=Tr0ub4dor&3xyz';
+  for (const file of ['/r/.env', '/r/.env.production', '/r/.envrc', '/r/config/secrets.yml', '/r/certs/server.pem',
+    '/r/certs/server.key', '/r/.npmrc', '/r/aws-credentials.json', '/r/.ssh/id_ed25519']) {
+    assert.equal(excerpt([], call({ file_path: file, content }, 'Write')), `call Write: ${file}`);
+    assert.equal(excerpt([], call({ file_path: file, old_string: 'x', new_string: content }, 'Edit')), `call Edit: ${file}`);
+  }
+  assert.equal(excerpt([], call({ file_path: '/r/src/env.ts', content: 'export const port = 3000;' }, 'Write')),
+    'call Write: /r/src/env.ts writes: export const port = 3000;');
+});
+
 test('a secret an edit writes is redacted', () => {
   // Built from pieces so secret scanners don't take the fixture for a real one.
   const key = 'sk' + '-ant-api03-Zx9_Qw8-Er7Ty6Ui5Op4';
-  const text = excerpt([call({ file_path: '/r/.env', content: `API_KEY=${key}\nPORT=3000` }, 'Write')],
-    call({ file_path: '/r/.env', old_string: 'PORT=3000', new_string: `KEY=${key}\nPORT=3000` }, 'Edit'));
+  const text = excerpt([call({ file_path: '/r/src/config.ts', content: `export const key = '${key}';\nPORT=3000` }, 'Write')],
+    call({ file_path: '/r/src/config.ts', old_string: 'PORT=3000', new_string: `KEY=${key}\nPORT=3000` }, 'Edit'));
   assert.ok(!text.includes('Zx9_Qw8'), text);
   assert.ok(text.includes('PORT=3000'), text);
   assert.equal(text.split('\n').length, 2);
