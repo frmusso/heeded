@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { applies, type Check, compile, LANGUAGES, verdict } from './check.ts';
 import type { InstructionFile } from './claude-code.ts';
-import { ask, batches } from './model.ts';
+import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
@@ -331,35 +331,43 @@ a case of the rule (how to plan, what to remember).
 `;
 
 /**
- * Reads the rules of the pending sections through the user's own claude, sonnet, one call per batch, and caches each
- * batch as it comes, each section remembered as its section's latest read version: an interrupted run keeps what it
- * paid for. Only the sections' text leaves the machine, secrets redacted; never a file's path. A batch that fails is
- * reported and nothing of it is cached. `onCall` hears of each call as it starts: its number, of how many.
+ * Reads the rules of the pending sections through the user's own claude, sonnet, one call per batch, up to 3 at once,
+ * and caches each batch as it comes, each section remembered as its section's latest read version: an interrupted run
+ * keeps what it paid for. Only the sections' text leaves the machine, secrets redacted; never a file's path. A batch
+ * that fails is reported and nothing of it is cached. Errors come in the order of the batches. `progress` hears of the
+ * calls done, of how many.
  */
 export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheDir: string,
-  onCall?: (n: number, of: number) => void): Promise<{ read: number; tokens: number; errors: string[] }> {
+  progress?: (done: number, of: number) => void): Promise<{ read: number; tokens: number; errors: string[] }> {
   const errors: string[] = [];
   let read = 0;
   let tokens = 0;
+  let done = 0;
+  let fatal = false;
   // A text under several paths (a worktree's copy of a file) is sent once, and remembered for each.
   const byHash = new Map<string, Pending[]>();
   for (const p of pending) byHash.set(p.section.hash, [...(byHash.get(p.section.hash) ?? []), p]);
   const all = batches([...byHash.values()], (group) => group[0].section.text.length, BATCH);
-  for (const [i, batch] of all.entries()) {
-    onCall?.(i + 1, all.length);
+  progress?.(0, all.length);
+  await pool(all, async (batch, b, stop) => {
     const body = batch.map(([{ section: s }], i) =>
       `<section id="${i + 1}" path="${redact(s.path.join(' › ')).replaceAll('"', "'")}">\n${redact(s.text)}\n</section>`);
     const run = await ask(MODEL, SCHEMA, `${PROMPT}\n${body.join('\n\n')}\n`, env);
+    progress?.(++done, all.length);
     tokens += run.tokens;
     if (run.error) {
-      errors.push(run.error);
-      if (run.fatal) break;
-      continue;
+      // No claude to run: said once, though the calls already started fail the same way.
+      if (!fatal) errors[b] = run.error;
+      if (run.fatal) {
+        fatal = true;
+        stop();
+      }
+      return;
     }
     const answered = (run.output as { sections?: unknown } | undefined)?.sections;
     if (!Array.isArray(answered) || !answered.every((a) => typeof a?.id === 'string' && Array.isArray(a.rules))) {
-      errors.push("claude's answer didn't match the schema");
-      continue;
+      errors[b] = "claude's answer didn't match the schema";
+      return;
     }
     // A section left out of the answer is not cached as holding no rule: it is asked about again.
     const byId = new Map(answered.map((a) => [a?.id, a?.rules]));
@@ -370,8 +378,8 @@ export async function extract(pending: Pending[], env: NodeJS.ProcessEnv, cacheD
       save(cacheDir, group[0].section.hash, rules);
       for (const p of group) remember(cacheDir, p.identity, p.section.hash, p.at);
     });
-    if (left) errors.push(`claude's answer left out ${left} of ${batch.length} sections: they will be asked about again`);
+    if (left) errors[b] = `claude's answer left out ${left} of ${batch.length} sections: they will be asked about again`;
     read += batch.length - left;
-  }
-  return { read, tokens, errors };
+  });
+  return { read, tokens, errors: errors.filter((e) => e !== undefined) };
 }

@@ -167,7 +167,7 @@ test('while it reads and judges, a status line says what it waits for and since 
   const { shown } = await heeded([], { terminal: true, reply: 'y' });
   // Every second the line is shown again with the time so far: a slow machine may add a repeat.
   const lines = shown.map((l) => l.replace(/ · \d+:\d\d$/, ' · m:ss')).filter((l, i, all) => l !== all[i - 1]);
-  assert.deepEqual(lines, ['reading 1 rule section · call 1 of 1 · m:ss', '', 'judging 1 case · call 1 of 1 · m:ss', '']);
+  assert.deepEqual(lines, ['reading 1 rule section · m:ss', '', 'judging 1 case · m:ss', '']);
   assert.match(shown[0], / · 0:00$/);
 });
 

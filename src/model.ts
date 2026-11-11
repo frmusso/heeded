@@ -20,6 +20,24 @@ export function batches<T>(items: T[], size: (item: T) => number, limit: number)
   return out;
 }
 
+/** Calls running at once: a long run takes a third of the time for the same tokens, and the machine runs three claude
+ * processes, not dozens. */
+const CALLS = 3;
+
+/** Runs `work` on each item, in order, at most 3 at once; after `stop()`, no other item starts. */
+export async function pool<T>(items: T[], work: (item: T, i: number, stop: () => void) => Promise<void>): Promise<void> {
+  let next = 0;
+  let stopped = false;
+  const stop = () => (stopped = true);
+  const lane = async () => {
+    while (!stopped && next < items.length) {
+      const i = next++;
+      await work(items[i], i, stop);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CALLS, items.length) }, lane));
+}
+
 /** Runs claude in an empty folder of its own, removed after, so no project instruction file is loaded with it; null
  * when there is no claude to run. */
 async function claude(args: string[], prompt: string, env: NodeJS.ProcessEnv):

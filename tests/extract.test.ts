@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { estimate, extract, load, rulesOf, type Section, sections } from '../src/rules.ts';
-import { installFakeClaude } from './support/fake-claude.ts';
+import { installFakeClaude, type Reply } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
 
 const section = (text: string, hash = text.slice(0, 8), path: string[] = []): Section => ({ path, text, hash });
@@ -28,7 +28,7 @@ const answer = (sections: { id: string; rules: unknown[] }[], tokens = [3800, 0,
 };
 
 /** A sandbox with the fake `claude` answering `replies` in turn, and its log of calls. */
-function claude(replies: { stdout?: string; exit?: number; stderr?: string }[]) {
+function claude(replies: Reply[]) {
   const s = sandbox();
   installFakeClaude(s.bin);
   const log = join(s.root, 'claude.log');
@@ -58,10 +58,10 @@ test('one isolated claude -p call per batch: the exact flags, an empty folder of
 test('each batch is cached as it is read, by section id, unknown ids ignored; tokens summed', async () => {
   const rule = { quote: 'q', name: 'n', kind: 'judgment', trigger: 't' };
   const { s, env, calls } = claude([
-    { stdout: answer([{ id: '1', rules: [rule] }, { id: '9', rules: [rule] }], [3800, 100, 0, 200]) },
-    { stdout: answer([{ id: '2', rules: [] }, { id: '1', rules: [] }], [3800, 0, 50, 300]) },
+    { match: 'gggg', stdout: answer([{ id: '1', rules: [rule] }, { id: '9', rules: [rule] }], [3800, 100, 0, 200]) },
+    { match: 'hhhh', stdout: answer([{ id: '2', rules: [] }, { id: '1', rules: [] }], [3800, 0, 50, 300]) },
   ]);
-  const result = await extract(pending(section('a'.repeat(20_000), 'ha'), section('b'.repeat(25_000), 'hb'), section('c', 'hc')), env,
+  const result = await extract(pending(section('g'.repeat(20_000), 'ha'), section('h'.repeat(25_000), 'hb'), section('c', 'hc')), env,
     s.cacheDir);
   assert.equal(calls().length, 2);
   assert.deepEqual(result, { read: 3, tokens: 8250, errors: [] });
@@ -74,23 +74,32 @@ test('claude not on the PATH: one error, nothing read, no other call tried', asy
   assert.deepEqual(result, { read: 0, tokens: 0, errors: ['claude not found. install claude code, or run heeded where claude runs.'] });
 });
 
-test('a call that fails or answers out of shape: an error, nothing read for its batch; the other batches still read; each call is told as it starts', async () => {
+test('a call that fails or answers out of shape: an error, nothing read for its batch; the other batches still read', async () => {
   const { s, env, calls } = claude([
-    { exit: 1, stderr: 'Error: rate limited\nretry later\n' },
-    { stdout: JSON.stringify({ type: 'result', is_error: true, result: 'nope' }) },
-    { stdout: answer([{ id: '1', rules: 'none' as never }]) },
-    { stdout: 'not json' },
-    { stdout: answer([{ id: '1', rules: [] }]) },
+    { match: 'gggg', exit: 1, stderr: 'Error: rate limited\nretry later\n' },
+    { match: 'hhhh', stdout: JSON.stringify({ type: 'result', is_error: true, result: 'nope' }) },
+    { match: 'iiii', stdout: answer([{ id: '1', rules: 'none' as never }]) },
+    { match: 'jjjj', stdout: 'not json' },
+    { match: 'kkkk', stdout: answer([{ id: '1', rules: [] }]) },
   ]);
-  const told: number[][] = [];
-  const result = await extract(pending(...['a', 'b', 'c', 'd', 'e'].map((x) => section(x.repeat(20_000), `h${x}`))), env, s.cacheDir,
-    (n, of) => told.push([n, of]));
+  // Errors in the order of the batches, whatever order the calls end in.
+  const result = await extract(pending(...['g', 'h', 'i', 'j', 'k'].map((x, i) => section(x.repeat(20_000), `h${'abcde'[i]}`))), env,
+    s.cacheDir);
   assert.equal(calls().length, 5);
-  assert.deepEqual(told, [[1, 5], [2, 5], [3, 5], [4, 5], [5, 5]]);
   const shape = "claude's answer didn't match the schema";
   assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', 'claude: nope', shape, shape]);
   assert.equal(result.read, 1);
   assert.deepEqual(['ha', 'hb', 'hc', 'hd', 'he'].map((h) => load(s.cacheDir, h)), [null, null, null, null, []]);
+});
+
+test('up to 3 calls at once; the progress counts calls done', async () => {
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  const told: number[][] = [];
+  const result = await extract(pending(...['g', 'h', 'i', 'j'].map((x) => section(x.repeat(20_000), `h${x}`))),
+    { ...env, FAKE_CLAUDE_WAIT: '500' }, s.cacheDir, (done, of) => told.push([done, of]));
+  assert.deepEqual(result, { read: 4, tokens: 16_000, errors: [] });
+  assert.equal(Math.max(...calls().map((c) => c.running)), 3);
+  assert.deepEqual(told, [[0, 4], [1, 4], [2, 4], [3, 4], [4, 4]]);
 });
 
 test("the sandbox's PATH holds only its own folder, so the real claude is never reached, even when it sits next to node", () => {

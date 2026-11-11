@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Event } from './claude-code.ts';
-import { ask, batches } from './model.ts';
+import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
 import { type Rule, write } from './rules.ts';
 
@@ -319,32 +319,39 @@ export function select(tool: Case[][], judgment: Case[][], budget: number): Case
 }
 
 /**
- * Judges cases through the user's own claude, one call per batch, and caches each verdict as its batch comes: a run
- * stopped midway keeps what it paid for. Only the rules and the excerpts leave the machine, secrets redacted. A verdict
- * whose quote isn't in its case's excerpt is `none`, never a violation; a case the answer leaves out is judged again
- * next time. `onCall` hears of each call as it starts: its number, of how many. `model` is a parameter for measuring
- * others.
+ * Judges cases through the user's own claude, one call per batch, up to 3 at once, and caches each verdict as its batch
+ * comes: a run stopped midway keeps what it paid for. Only the rules and the excerpts leave the machine, secrets
+ * redacted. A verdict whose quote isn't in its case's excerpt is `none`, never a violation; a case the answer leaves
+ * out is judged again next time. Errors come in the order of the batches. `progress` hears of the calls done, of how
+ * many. `model` is a parameter for measuring others.
  */
 export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: string,
-  onCall?: (n: number, of: number) => void, model = JUDGE_MODEL):
+  progress?: (done: number, of: number) => void, model = JUDGE_MODEL):
   Promise<{ judged: number; tokens: number; errors: string[] }> {
   const errors: string[] = [];
   let judged = 0;
   let tokens = 0;
+  let done = 0;
+  let fatal = false;
   const all = prompts(cases, env.HOME);
-  for (const [i, { batch, prompt }] of all.entries()) {
-    onCall?.(i + 1, all.length);
+  progress?.(0, all.length);
+  await pool(all, async ({ batch, prompt }, b, stop) => {
     const run = await ask(model, JUDGE_SCHEMA, prompt, env);
+    progress?.(++done, all.length);
     tokens += run.tokens;
     if (run.error) {
-      errors.push(run.error);
-      if (run.fatal) break;
-      continue;
+      // No claude to run: said once, though the calls already started fail the same way.
+      if (!fatal) errors[b] = run.error;
+      if (run.fatal) {
+        fatal = true;
+        stop();
+      }
+      return;
     }
     const answered = (run.output as { cases?: unknown } | undefined)?.cases;
     if (!Array.isArray(answered)) {
-      errors.push("claude's answer didn't match the schema");
-      continue;
+      errors[b] = "claude's answer didn't match the schema";
+      return;
     }
     // An id answered twice keeps its first answer; an id not asked about is ignored.
     const first = new Map<string, Record<string, unknown>>();
@@ -358,7 +365,7 @@ export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: str
       saveVerdict(cacheDir, c.id, a.verdict !== 'none' && shown ? { verdict: a.verdict as Verdict['verdict'], quote } : { verdict: 'none' });
       judged++;
     });
-    if (left) errors.push(`claude's answer left out ${left} of ${batch.length} cases: they will be judged again`);
-  }
-  return { judged, tokens, errors };
+    if (left) errors[b] = `claude's answer left out ${left} of ${batch.length} cases: they will be judged again`;
+  });
+  return { judged, tokens, errors: errors.filter((e) => e !== undefined) };
 }

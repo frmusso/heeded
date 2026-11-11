@@ -58,17 +58,17 @@ const thousands = (n: number) => n.toLocaleString('en-US');
 const plural = (n: number, word: string) => `${thousands(n)} ${word}${n === 1 ? '' : 's'}`;
 const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
-/** Runs a step that calls claude, with a status line meanwhile: what it does, the call it waits for, the time so far,
- * shown again every second. A call takes up to a minute or two: without it the run looks stuck. */
-async function step<T>(io: IO, doing: string, work: (onCall: (n: number, of: number) => void) => Promise<T>):
+/** Runs a step that calls claude, with a status line meanwhile: what it does, the calls done when it makes several, the
+ * time so far, shown again every second. A call takes up to a minute or two: without it the run looks stuck. */
+async function step<T>(io: IO, doing: string, work: (progress: (done: number, of: number) => void) => Promise<T>):
   Promise<T> {
   const start = Date.now();
-  let call = '';
-  const show = () => io.status(`${doing}${call} · ${clock(Date.now() - start)}`);
+  let calls = '';
+  const show = () => io.status(`${doing}${calls} · ${clock(Date.now() - start)}`);
   const timer = setInterval(show, 1000);
   try {
-    return await work((n, of) => {
-      call = ` · call ${n} of ${of}`;
+    return await work((done, of) => {
+      calls = of > 1 ? ` · ${done} of ${of} calls done` : '';
       show();
     });
   } finally {
@@ -142,7 +142,7 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
       let judging = true;
       if (distinct.length) {
         const found = await step(io, `reading ${plural(distinct.length, 'rule section')}`,
-          (onCall) => extract(pending, io.env, cacheDir, onCall));
+          (progress) => extract(pending, io.env, cacheDir, progress));
         if (found.read) io.err(`read ${plural(found.read, 'section')} · ${thousands(found.tokens)} tokens\n`);
         failed(found.errors);
         // The rules just read have cases of their own, chosen with the others.
@@ -153,7 +153,7 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
       }
       if (judging && picked.length) {
         const done = await step(io, `judging ${plural(picked.length, 'case')}`,
-          (onCall) => judge(picked, io.env, cacheDir, onCall));
+          (progress) => judge(picked, io.env, cacheDir, progress));
         if (done.judged) io.err(`judged ${plural(done.judged, 'case')} · ${thousands(done.tokens)} tokens\n`);
         failed(done.errors);
         if (done.judged) ({ report } = await scan(configDir, io.cwd, cacheDir));

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { type Event, read } from '../src/claude-code.ts';
 import { type Case, estimate, excerpts, judge, saveVerdict, select, verdicts } from '../src/judge.ts';
 import type { Rule } from '../src/rules.ts';
-import { installFakeClaude } from './support/fake-claude.ts';
+import { installFakeClaude, type Reply } from './support/fake-claude.ts';
 import { cases as labelled, LABELLED } from './support/labelled.ts';
 import { sandbox } from './support/sandbox.ts';
 import { assistant, user, writeSession } from './support/transcript.ts';
@@ -244,7 +244,7 @@ const answer = (list: unknown, tokens = [4000, 0, 0, 100]) => JSON.stringify({
   usage: { input_tokens: tokens[0], cache_creation_input_tokens: tokens[1], cache_read_input_tokens: tokens[2], output_tokens: tokens[3] },
 });
 /** A sandbox with the fake `claude` answering `replies` in turn, and its log of calls. */
-function claude(replies: { stdout?: string; exit?: number; stderr?: string }[]) {
+function claude(replies: Reply[]) {
   const s = sandbox();
   installFakeClaude(s.bin);
   const log = join(s.root, 'claude.log');
@@ -292,14 +292,14 @@ test("a rule comes from its file, then its headings: a scoped rule is told by wh
   assert.ok(calls()[0].stdin.includes('<rule id="1" from="~/repos/app/web/CLAUDE.md › CLAUDE.md › TypeScript">'), calls()[0].stdin);
 });
 
-test('cases go in batches of at most 40,000 characters; tokens are summed over the calls; each call is told as it starts', async () => {
+test('cases go in batches of at most 40,000 characters; tokens are summed over the calls', async () => {
   const { s, env, calls } = claude([{ stdout: answer([], [4000, 100, 0, 200]) }, { stdout: answer([], [4000, 0, 50, 300]) }]);
   const big = () => kase(commit, `you: x\ncall Bash: ${'y'.repeat(15_000)}`);
   const told: number[][] = [];
-  const result = await judge([big(), big(), big()], env, s.cacheDir, (n, of) => told.push([n, of, calls().length]));
+  const result = await judge([big(), big(), big()], env, s.cacheDir, (done, of) => told.push([done, of]));
   assert.equal(calls().length, 2);
-  assert.deepEqual(told, [[1, 2, 0], [2, 2, 1]]);
-  assert.equal(calls()[0].stdin.match(/<case id=/g).length, 2);
+  assert.deepEqual(told, [[0, 2], [1, 2], [2, 2]]);
+  assert.deepEqual(calls().map((c) => c.stdin.match(/<case id=/g).length).sort(), [1, 2]);
   assert.equal(result.tokens, 8650);
 });
 
@@ -337,10 +337,11 @@ test('an unknown verdict, or a case left out, is not cached, and said', async ()
   assert.deepEqual(list.map(cached(s.cacheDir)), [null, { verdict: 'none' }, null]);
 });
 
-test('each batch is cached as it comes: a failed second batch keeps the first', async () => {
-  const big = () => kase(commit, `you: x\ncall Bash: ${'y'.repeat(25_000)}`);
-  const list = [big(), big()];
-  const { s, env } = claude([{ stdout: answer([{ id: '1', verdict: 'none' }]) }, { exit: 1, stderr: 'Error: rate limited\n' }]);
+test('each batch is cached as it returns: a failed batch keeps the others', async () => {
+  const big = (c: string) => kase(commit, `you: x\ncall Bash: ${c.repeat(25_000)}`);
+  const list = [big('y'), big('z')];
+  const { s, env } = claude([{ match: 'yyyy', stdout: answer([{ id: '1', verdict: 'none' }]) },
+    { match: 'zzzz', exit: 1, stderr: 'Error: rate limited\n' }]);
   assert.deepEqual(await judge(list, env, s.cacheDir),
     { judged: 1, tokens: 4100, errors: ['claude exited with code 1: Error: rate limited'] });
   assert.deepEqual(list.map(cached(s.cacheDir)), [{ verdict: 'none' }, null]);
@@ -351,15 +352,28 @@ test('failures as in the extraction: no claude, an exit code, an error answer, a
   const none = sandbox();
   assert.deepEqual(await judge([big(), big()], none.env, none.cacheDir),
     { judged: 0, tokens: 0, errors: ['claude not found. install claude code, or run heeded where claude runs.'] });
-  const { s, env, calls } = claude([{ exit: 1, stderr: 'Error: rate limited\nretry later\n' },
-    { stdout: JSON.stringify({ type: 'result', is_error: true, result: 'nope' }) }, { stdout: answer('none') }, { stdout: 'not json' }]);
-  const list = [big(), big(), big(), big()];
+  const { s, env, calls } = claude([{ match: 'kkkk', exit: 1, stderr: 'Error: rate limited\nretry later\n' },
+    { match: 'llll', stdout: JSON.stringify({ type: 'result', is_error: true, result: 'nope' }) },
+    { match: 'mmmm', stdout: answer('none') }, { match: 'nnnn', stdout: 'not json' }]);
+  // Errors in the order of the batches, whatever order the calls end in.
+  const list = ['k', 'l', 'm', 'n'].map((c) => kase(commit, `you: x\ncall Bash: ${c.repeat(25_000)}`));
   const result = await judge(list, env, s.cacheDir);
   assert.equal(calls().length, 4);
   const shape = "claude's answer didn't match the schema";
   assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', 'claude: nope', shape, shape]);
   assert.equal(result.judged, 0);
   assert.deepEqual(list.map(cached(s.cacheDir)), [null, null, null, null]);
+});
+
+test('up to 3 calls at once; every batch cached as it returns; the progress counts calls done', async () => {
+  const list = ['g', 'h', 'i', 'j', 'k'].map((c) => kase(commit, `you: x\ncall Bash: ${c.repeat(25_000)}`));
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', verdict: 'none' }]) }]);
+  const told: number[][] = [];
+  const result = await judge(list, { ...env, FAKE_CLAUDE_WAIT: '500' }, s.cacheDir, (done, of) => told.push([done, of]));
+  assert.deepEqual(result, { judged: 5, tokens: 20_500, errors: [] });
+  assert.equal(Math.max(...calls().map((c) => c.running)), 3);
+  assert.deepEqual(told, [[0, 5], [1, 5], [2, 5], [3, 5], [4, 5], [5, 5]]);
+  assert.deepEqual(list.map(cached(s.cacheDir)), list.map(() => ({ verdict: 'none' })));
 });
 
 // What judging costs, and what a run judges within its budget.
@@ -374,7 +388,7 @@ test('the estimate: the prompts judging sends, ~1.8 characters a token, ~1.2k to
   assert.equal(calls().length, 2);
   assert.deepEqual(estimate(list), { calls: 2, tokens: 1200 * 2 + Math.ceil(sent / 1.8) + 210 * 3 });
   // A rule is read once a call: the words around it don't count again for its second case.
-  assert.equal(calls()[0].stdin.split('x'.repeat(3000)).length, 2);
+  assert.equal(calls().find((c) => c.stdin.includes('never commit for me!')).stdin.split('x'.repeat(3000)).length, 2);
 });
 
 const timed = (rule: Rule, day: number): Case => ({ ...kase(rule, 'you: x\ncall Bash: y'), at: `2026-11-0${day}T10:00:00Z` });
