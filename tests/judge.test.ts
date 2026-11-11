@@ -113,6 +113,16 @@ test("an edit's line is cut as any line: 300 before the case, 2,000 on the case,
   for (const l of lines) assert.ok(l.endsWith('…'), l.slice(-10));
 });
 
+test("a line cut before it renders is marked cut: indented code, or a token too long to show", () => {
+  // 1,200 characters of indented code collapse to a line under 300: the cut must still show.
+  const code = Array.from({ length: 16 }, (_, i) => `${' '.repeat(60)}<Item k={${i}} />`).join('\n') + '\nconst at = now();';
+  const lines = excerpt([call({ file_path: '/r/List.tsx', new_string: code }, 'Edit')], call('git status')).split('\n');
+  assert.ok(lines[0].length <= 'call Edit: '.length + 300, String(lines[0].length));
+  assert.ok(lines[0].endsWith('…'), lines[0]);
+  assert.equal(excerpt([], call({ file_path: '/r/a.min.js', content: 'x'.repeat(5000) }, 'Write')),
+    'call Write: /r/a.min.js writes:…');
+});
+
 test('a secret an edit writes is redacted', () => {
   // Built from pieces so secret scanners don't take the fixture for a real one.
   const key = 'sk' + '-ant-api03-Zx9_Qw8-Er7Ty6Ui5Op4';

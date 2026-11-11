@@ -75,13 +75,17 @@ function head(text: string, limit: number): string {
   return text.slice(0, end);
 }
 
-/** A head on one line, secrets redacted, cut at `limit` characters with `…` last: never longer than the head. */
-function render(head: string, limit: number): string {
+/** A head on one line, secrets redacted, cut at `limit` characters with `…` last, as it is when its text goes on past
+ * the head (spacing collapsed, a head can be far shorter than its limit): never longer than the head. */
+function render(head: string, limit: number, whole: boolean): string {
   const line = redact(head).replace(/[\p{Cc}\s]+/gu, ' ').trim();
-  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
+  return line.length > limit || !whole ? `${line.slice(0, limit - 1)}…` : line;
 }
 
-const cut = (text: string, limit: number) => render(head(text, limit), limit);
+function cut(text: string, limit: number): string {
+  const start = head(text, limit);
+  return render(start, limit, start.length === text.length);
+}
 
 /**
  * A line's prefix and what it shows: a call its command, else its file and what it writes there, else its whole input.
@@ -198,7 +202,7 @@ export function excerpts() {
       hash.update('\n').update(prefix).update(caseHead);
       let text: string | undefined;
       memo = { e, result: { key: hash.digest('hex'), at: e.at, get text() {
-        return (text ??= [...lines, prefix + render(caseHead, WORDS)].join('\n'));
+        return (text ??= [...lines, prefix + render(caseHead, WORDS, caseHead.length === raw.length)].join('\n'));
       } } };
       return memo.result;
     },
