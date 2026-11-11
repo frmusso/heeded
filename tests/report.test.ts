@@ -370,6 +370,16 @@ test('heeded rules shows what a command carries is checked for', () => {
     /no co-authors in commits {2}Bash command {2}when \\bgit\\s\+commit\\b {2}when data \\S {2}broken data Co-Authored-By\n/);
 });
 
+test('heeded rules: a sequence rule shows the calls it is about, then the one that must come first or follow', () => {
+  const first = r('read the api doc first', 'kept', 3, 0, { files: [local], check: { field: 'file_path',
+    when: { tool: '^(Edit|Write)$', value: '/src/api/' }, first: { field: 'file_path', tool: '^Read$', value: 'docs/api\\.md$' } } });
+  const then = r('build after changing src', 'broken', 4, 1, { files: [local], check: { field: 'file_path',
+    when: { tool: '^Edit$', value: '/src/' }, then: { field: 'command', tool: '^Bash$', value: '(^|\\s)npm\\s+run\\s+build' } } });
+  const out = rules({ ...found, rules: [first, then] }, { color: false, home: '/home/someone' });
+  assert.match(out, /read the api doc first +tool \^\(Edit\|Write\)\$ file_path {2}when \/src\/api\/ {2}first Read file_path when docs\/api\\\.md\$\n/);
+  assert.match(out, /build after changing src +Edit file_path {2}when \/src\/ {2}then Bash command when \(\^\|\\s\)npm\\s\+run\\s\+build\n/);
+});
+
 test('heeded rules: a judgment rule shows what it is judged on, or why it has no cases', () => {
   const judged = [
     r('say what you changed', 'judgment', 0, 0, { files: [local], check: { reply: true } }),

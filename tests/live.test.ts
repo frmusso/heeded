@@ -55,6 +55,24 @@ test('the extraction lists every rule, and gives cases to rules about what is wr
   }
 });
 
+test('the extraction finds rules about the order of calls: one first, one then, both verified', { skip }, async (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));
+  try {
+    const [section] = sections('## work\n\n- read docs/api.md before editing anything in src/api/\n'
+      + '- run npm run build after changing files in src/\n');
+    const result = await extract([{ section, identity: 'live', at: '' }], process.env, dir);
+    t.diagnostic(`${result.tokens} tokens`);
+    assert.deepEqual(result.errors, []);
+    const raw = load(dir, section.hash) ?? [];
+    const rules = raw.map((r) => verify(r, section));
+    assert.equal(rules.length, 2, JSON.stringify(raw));
+    for (const r of rules) assert.ok(r?.kind === 'sequence' && !r.demoted, JSON.stringify(raw));
+    assert.ok(rules.some((r) => r?.check?.first) && rules.some((r) => r?.check?.then), JSON.stringify(raw));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the judge on the labelled set, two other rules on each excerpt: no false broken, recall 80% or more', { skip },
   async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));

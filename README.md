@@ -100,11 +100,14 @@ to type `heeded` instead of `npx heeded`, install it: `npm install -g heeded`.
    splits them into sections and asks `claude` (sonnet) for each section's rules, each with a check:
    - a pattern over a tool call, like `git add -A` in a bash command;
    - the language replies must be in;
+   - the order of two calls in a session: reading a doc before editing the code it covers, running the build after a
+     change;
    - otherwise, the calls or replies the rule is about, left to the judge.
 
    a check that fails its own examples is set aside. a section is read once, then cached.
 3. **check every call.** one pass over the transcripts: each call and reply against the rules in effect at that point.
-   a shell command is read the way a shell reads it, so `echo "rm -rf"` isn't running `rm`.
+   a shell command is read the way a shell reads it, so `echo "rm -rf"` isn't running `rm`. a rule about order follows
+   each session: the call it asks for must have come earlier in the session, or follow before the agent's turn ends.
 4. **judge.** a pattern finds candidates, not violations. each candidate, and a sample of the cases no pattern can
    decide, goes to `claude` (haiku) with an excerpt of its session: your prompt, what the agent did since, the call
    itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. an
@@ -125,18 +128,20 @@ never spends.
 ```text
 $ npx heeded rules
 
-  ~/repos/app · 1 file · 5 rules
+  ~/repos/app · 1 file · 6 rules
 
   CLAUDE.md
     ✓ :8   never git add -A           Bash command  when (^|\s)git\s+add(\s|$)  broken \s(-A|--all)\b
     ✓ :12  answer in italian          language it
+    ✓ :13  build after changing src   Edit file_path  when /src/  then Bash command when (^|\s)npm\s+run\s+build(\s|$)
     · :15  commit only when asked     judged on Bash command  when (^|\s)git\s+commit(\s|$)
     · :19  say what you changed       judged on replies
     ! :23  never kill the dev server  failed its examples: keeps "pkill -f vite-test"
 ```
 
-`✓` a pattern decides it: `when` picks the calls it applies to, `broken` the ones that break it. `·` the judge
-decides, on the calls or replies shown. `!` its check was set aside, and why.
+`✓` a pattern decides it: `when` picks the calls it applies to, `broken` the ones that break it; for a rule about
+order, `first` is the call that must have come before them, `then` the one that must follow. `·` the judge decides, on
+the calls or replies shown. `!` its check was set aside, and why.
 
 ## privacy
 

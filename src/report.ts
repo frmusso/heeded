@@ -178,15 +178,23 @@ function how(x: RuleData): string {
   return patterns(x.check!);
 }
 
+/** A tool pattern as a reader says it: a plain name, or the pattern; and the field read. */
+const which = (tool: string | undefined, field: string | undefined) =>
+  `${tool === undefined ? 'any tool' : /^\^\w+\$$/.test(tool) ? tool.slice(1, -1) : `tool ${tool}`}${field ? ` ${field}` : ''}`;
+
 function patterns(c: NonNullable<RuleData['check']>): string {
-  const tool = c.when?.tool;
+  // A sequence rule's other call: the one that must come first, or follow.
+  const step = c.first ?? c.then;
   return [
-    `${tool === undefined ? 'any tool' : /^\^\w+\$$/.test(tool) ? tool.slice(1, -1) : `tool ${tool}`}${c.field ? ` ${c.field}` : ''}`,
+    which(c.when?.tool, c.field),
     c.when?.value !== undefined && `when ${c.when.value}`,
     c.when?.data !== undefined && `when data ${c.when.data}`,
     c.broken?.tool !== undefined && `broken tool ${c.broken.tool}`,
     c.broken?.value !== undefined && `broken ${c.broken.value}`,
     c.broken?.data !== undefined && `broken data ${c.broken.data}`,
+    step && [`${c.first ? 'first' : 'then'} ${which(step.tool, step.field)}`,
+      step.value !== undefined && `when ${step.value}`, step.data !== undefined && `when data ${step.data}`]
+      .filter(Boolean).join(' '),
     c.ignoreCase && 'ignoring case',
   ].filter(Boolean).join('  ');
 }

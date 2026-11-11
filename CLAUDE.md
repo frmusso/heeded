@@ -4,7 +4,7 @@ heeded measures whether coding agents follow their instruction files (`CLAUDE.md
 transcripts they leave on disk. this file is for anyone working on its code, and for their agents: [README.md](README.md)
 is for users. personal instructions go in `CLAUDE.local.md`, which git ignores.
 
-**status:** v3.1, `0.2.1` ready to publish (`0.2.0` on npm).
+**status:** v3.2, `0.3.0` ready to publish (`0.2.1` on npm).
 
 ## principles
 
@@ -76,8 +76,9 @@ instruction files (from the events) ──▶ rules.ts      judge.ts: select wit
   the judge call, each excerpt once with every rule it is a case of, and the local check of its answer.
 - `src/shell.ts`: a shell command line read as a shell reads it, into simple commands, each with what it does and what
   it carries.
-- `src/check.ts`: tool checks, reply language, and the counter: events in; report data, the sections to read and the
-  cases waiting for the judge out. a tool rule's candidate or a judgment rule's case counts by its verdict.
+- `src/check.ts`: tool checks, reply language, a sequence rule's walk through a session, and the counter: events in;
+  report data, the sections to read and the cases waiting for the judge out. a tool rule's candidate or a judgment
+  rule's case counts by its verdict; a sequence rule's case is counted as its walk decides it.
 - `src/report.ts`: the terminal report, `heeded rules`, the json document.
 - `src/redact.ts`: secrets out of anything sent or printed.
 - `scripts/public-tree.ts`: the guard that keeps private notes, notes on who decided what and personal data out of the
