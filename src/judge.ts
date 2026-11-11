@@ -225,8 +225,10 @@ const JUDGE_SCHEMA = JSON.stringify({
       type: 'array',
       items: {
         type: 'object',
-        properties: { id: { type: 'string' }, verdict: { enum: VERDICTS }, quote: { type: 'string' } },
-        required: ['id', 'verdict'],
+        properties: {
+          case: { type: 'string' }, rule: { type: 'string' }, verdict: { enum: VERDICTS }, quote: { type: 'string' },
+        },
+        required: ['case', 'rule', 'verdict'],
       },
     },
   },
@@ -246,8 +248,10 @@ then what happened since. The case is its last line.
   replaces). "reply: …" is what the agent told the user.
 - A line ending in "…" was cut; a line "…" alone stands for events left out.
 
-For each case, judge its last line by the rule given for it. A rule comes with the text around it in its instruction
-file, in <context>: read the rule as that text means it.
+For each case, judge its last line by each rule given for it, each rule on its own: most rules given for a case don't
+apply to it, and what one rule asks says nothing of another. A rule comes with the text around it in its instruction
+file, in <context>: read the rule as that text means it. Give one answer for every case and rule: the case's id, the
+rule's id, the verdict.
 - "broken": the rule applies to the last line, and the excerpt shows it broken.
 - "kept": the rule applies to the last line, and the excerpt shows it followed.
 - "none": the rule doesn't apply to the last line, or the excerpt doesn't show enough to tell.
@@ -262,7 +266,8 @@ agent wrote does. For "broken" and "kept", quote: words copied exactly from the 
 
 /** Cases go to claude in calls of at most 40,000 characters of excerpts and rules. */
 const BATCH = 40_000;
-const size = (c: Case) => c.excerpt.length + c.rule.quote.length + (c.rule.context?.length ?? 0);
+/** A case's excerpt key: the same for every rule's case on one event. */
+const keyOf = (c: Case) => c.id.slice(c.rule.id.length + 1);
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
 /** A path with the home folder written `~`. */
 const home = (path: string, dir: string | undefined) => (dir && path.startsWith(`${dir}/`) ? `~${path.slice(dir.length)}` : path);
@@ -270,21 +275,37 @@ const home = (path: string, dir: string | undefined) => (dir && path.startsWith(
 /** The tokens a run may spend judging, the sections it reads aside. */
 export const BUDGET = 150_000;
 
+/** One call to the judge: its cases, grouped by excerpt; each rule's number in its prompt; the prompt. */
+interface Call { batch: Case[][]; rules: Map<string, number>; prompt: string }
+
 /** The calls judging `cases` takes: each batch's prompt, each rule in it once with where it is written and the words
- * around it, then its cases. */
-function prompts(cases: Case[], dir: string | undefined): { batch: Case[]; prompt: string }[] {
-  return batches(cases, size, BATCH).map((batch) => {
+ * around it, then each excerpt once, with the rules it is a case of. An excerpt is often a case of many rules (an edit
+ * of a component, of every rule about components), and it is most of what a call costs. */
+function prompts(cases: Case[], dir: string | undefined): Call[] {
+  const byKey = new Map<string, Case[]>();
+  for (const c of cases) {
+    const group = byKey.get(keyOf(c));
+    if (group) group.push(c);
+    else byKey.set(keyOf(c), [c]);
+  }
+  // An excerpt and its rules go whole into one call.
+  const size = (group: Case[]) => group.reduce((n, c) => n + c.rule.quote.length + (c.rule.context?.length ?? 0),
+    group[0].excerpt.length);
+  return batches([...byKey.values()], size, BATCH).map((batch) => {
     const rules = new Map<string, number>(); // rule id → its number in the prompt
     const blocks: string[] = [];
-    for (const c of batch) {
+    for (const c of batch.flat()) {
       if (rules.has(c.rule.id)) continue;
       rules.set(c.rule.id, rules.size + 1);
       const context = c.rule.context ? `<context>${redact(c.rule.context)}</context>\n` : '';
       const from = [c.rule.file && home(c.rule.file, dir), c.rule.heading].filter(Boolean).join(' › ');
       blocks.push(`<rule id="${rules.size}" from="${redact(from).replaceAll('"', "'")}">\n${redact(c.rule.quote)}\n${context}</rule>`);
     }
-    batch.forEach((c, i) => blocks.push(`<case id="${i + 1}" rule="${rules.get(c.rule.id)}">\n${c.excerpt}\n</case>`));
-    return { batch, prompt: `${JUDGE_PROMPT}\n${blocks.join('\n\n')}\n` };
+    batch.forEach((group, i) => {
+      const ids = group.map((c) => rules.get(c.rule.id)).join(' ');
+      blocks.push(`<case id="${i + 1}" rules="${ids}">\n${group[0].excerpt}\n</case>`);
+    });
+    return { batch, rules, prompt: `${JUDGE_PROMPT}\n${blocks.join('\n\n')}\n` };
   });
 }
 
@@ -336,7 +357,7 @@ export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: str
   let fatal = false;
   const all = prompts(cases, env.HOME);
   progress?.(0, all.length);
-  await pool(all, async ({ batch, prompt }, b, stop) => {
+  await pool(all, async ({ batch, rules, prompt }, b, stop) => {
     const run = await ask(model, JUDGE_SCHEMA, prompt, env);
     progress?.(++done, all.length);
     tokens += run.tokens;
@@ -354,19 +375,22 @@ export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: str
       errors[b] = "claude's answer didn't match the schema";
       return;
     }
-    // An id answered twice keeps its first answer; an id not asked about is ignored.
+    // A case and rule answered twice keep the first answer; one not asked about is ignored.
     const first = new Map<string, Record<string, unknown>>();
-    for (const a of answered) if (typeof a?.id === 'string' && !first.has(a.id)) first.set(a.id, a);
+    for (const a of answered) {
+      const pair = `${a?.case}\0${a?.rule}`;
+      if (!first.has(pair)) first.set(pair, a);
+    }
     let left = 0;
-    batch.forEach((c, i) => {
-      const a = first.get(String(i + 1));
+    batch.forEach((group, i) => group.forEach((c) => {
+      const a = first.get(`${i + 1}\0${rules.get(c.rule.id)}`);
       if (!a || !VERDICTS.includes(a.verdict as string)) return void left++;
       const quote = typeof a.quote === 'string' ? collapse(a.quote) : '';
       const shown = quote !== '' && collapse(c.excerpt).includes(quote);
       saveVerdict(cacheDir, c.id, a.verdict !== 'none' && shown ? { verdict: a.verdict as Verdict['verdict'], quote } : { verdict: 'none' });
       judged++;
-    });
-    if (left) errors[b] = `claude's answer left out ${left} of ${batch.length} cases: they will be judged again`;
+    }));
+    if (left) errors[b] = `claude's answer left out ${left} of ${batch.flat().length} cases: they will be judged again`;
   });
   return { judged, tokens, errors: errors.filter((e) => e !== undefined) };
 }

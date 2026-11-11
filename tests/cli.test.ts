@@ -61,7 +61,7 @@ const answer = JSON.stringify({ type: 'result', subtype: 'success', is_error: fa
   usage });
 /** The judge's answer for the session's one case, `git add -A`. */
 const confirmed = JSON.stringify({ type: 'result', subtype: 'success', is_error: false,
-  structured_output: { cases: [{ id: '1', verdict: 'broken', quote: 'git add -A' }] }, usage });
+  structured_output: { cases: [{ case: '1', rule: '1', verdict: 'broken', quote: 'git add -A' }] }, usage });
 
 function setup({ session = true, claude = true, cached = false, replies = [answer] } = {}) {
   const s = sandbox();
@@ -390,7 +390,7 @@ function commits(n: number, replies: string[]) {
   return t;
 }
 const kept = JSON.stringify({ is_error: false, usage, structured_output: {
-  cases: Array.from({ length: 8 }, (_, i) => ({ id: String(i + 1), verdict: 'kept', quote: 'git commit' })) } });
+  cases: Array.from({ length: 8 }, (_, i) => ({ case: String(i + 1), rule: '1', verdict: 'kept', quote: 'git commit' })) } });
 
 test('--all: the cases now and the most they can grow to; judged round after round until none waits', async () => {
   const { heeded, calls } = commits(12, [kept]);

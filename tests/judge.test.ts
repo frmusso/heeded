@@ -278,9 +278,9 @@ test("one isolated claude -p call per batch: the judge's model (haiku) and schem
   assert.ok(!call.stdin.includes('the content of an edit'));
   assert.ok(call.stdin.includes('<rule id="1" from="git › commits">\ncommit only when asked\n<context>Commits are the user\'s call: '
     + 'commit only when asked, never on your own.</context>\n</rule>'), call.stdin);
-  assert.ok(call.stdin.includes(`<case id="1" rule="1">\n${first.excerpt}\n</case>`));
+  assert.ok(call.stdin.includes(`<case id="1" rules="1">\n${first.excerpt}\n</case>`));
   assert.ok(call.stdin.includes('<rule id="2" from="deploy with …">'));
-  assert.ok(call.stdin.includes('<case id="2" rule="2">'));
+  assert.ok(call.stdin.includes('<case id="2" rules="2">'));
   assert.ok(!call.stdin.includes(key));
   assert.ok(!call.stdin.includes(s.root));
 });
@@ -303,24 +303,66 @@ test('cases go in batches of at most 40,000 characters; tokens are summed over t
   assert.equal(result.tokens, 8650);
 });
 
-test('verdicts are mapped back by id and cached; an unknown id is ignored, a repeated one keeps its first answer', async () => {
+test('verdicts are mapped back by case and rule and cached; an unknown case is ignored, a repeated one keeps its first', async () => {
   const a = kase(commit, 'you: fix it\ncall Bash: git commit -m a');
   const b = kase(commit, 'you: fix it and commit\ncall Bash: git commit -m b');
-  const { s, env } = claude([{ stdout: answer([{ id: '2', verdict: 'kept', quote: 'fix it and commit' },
-    { id: '1', verdict: 'broken', quote: 'git commit -m a' }, { id: '1', verdict: 'kept', quote: 'fix it' },
-    { id: '9', verdict: 'broken', quote: 'git commit' }]) }]);
+  const { s, env } = claude([{ stdout: answer([{ case: '2', rule: '1', verdict: 'kept', quote: 'fix it and commit' },
+    { case: '1', rule: '1', verdict: 'broken', quote: 'git commit -m a' }, { case: '1', rule: '1', verdict: 'kept', quote: 'fix it' },
+    { case: '9', rule: '1', verdict: 'broken', quote: 'git commit' }]) }]);
   assert.deepEqual(await judge([a, b], env, s.cacheDir), { judged: 2, tokens: 4100, errors: [] });
   const of = cached(s.cacheDir);
   assert.deepEqual([of(a), of(b)], [{ verdict: 'broken', quote: 'git commit -m a' }, { verdict: 'kept', quote: 'fix it and commit' }]);
+});
+
+// Cases of several rules on one event: the same excerpt, the same key.
+const on = (rule: Rule, excerpt: string, key: string): Case => ({ id: `${rule.id}-${key}`, rule, excerpt, at });
+const deploy = judged('never deploy unless asked', 'deploy');
+
+test('an excerpt goes once, with every rule it is a case of; one verdict per case and rule', async () => {
+  const both = 'you: fix the typo and ship\ncall Bash: git commit -am fix && railway up';
+  const [a, b, c] = [on(commit, both, 'k1'), on(deploy, 'you: ship it\ncall Bash: railway up', 'k2'), on(deploy, both, 'k1')];
+  const { s, env, calls } = claude([{ stdout: answer([
+    { case: '1', rule: '2', verdict: 'broken', quote: 'railway up' }, { case: '1', rule: '1', verdict: 'kept', quote: 'fix the typo' },
+    { case: '2', rule: '2', verdict: 'kept', quote: 'ship it' },
+    // A rule not asked about on that case, a case not asked about, a pair answered twice: the first answer stands.
+    { case: '2', rule: '1', verdict: 'broken', quote: 'ship it' }, { case: '7', rule: '1', verdict: 'broken', quote: 'fix' },
+    { case: '1', rule: '2', verdict: 'kept', quote: 'railway up' }]) }]);
+  assert.deepEqual(await judge([a, b, c], env, s.cacheDir), { judged: 3, tokens: 4100, errors: [] });
+  const { stdin } = calls()[0];
+  assert.equal(stdin.split(both).length, 2);
+  assert.ok(stdin.includes(`<case id="1" rules="1 2">\n${both}\n</case>`), stdin);
+  assert.ok(stdin.includes('<case id="2" rules="2">\nyou: ship it\n'), stdin);
+  assert.ok(stdin.includes('each rule given for it, each rule on its own'));
+  assert.ok(stdin.includes('one answer for every case and rule'));
+  assert.deepEqual([a, b, c].map(cached(s.cacheDir)), [{ verdict: 'kept', quote: 'fix the typo' },
+    { verdict: 'kept', quote: 'ship it' }, { verdict: 'broken', quote: 'railway up' }]);
+});
+
+test("a rule left out of a case's answer is not cached, and said", async () => {
+  const both = 'you: fix it\ncall Bash: git commit -m fix && railway up';
+  const list = [on(commit, both, 'k1'), on(deploy, both, 'k1')];
+  const { s, env } = claude([{ stdout: answer([{ case: '1', rule: '1', verdict: 'none' }]) }]);
+  assert.deepEqual(await judge(list, env, s.cacheDir),
+    { judged: 1, tokens: 4100, errors: ["claude's answer left out 1 of 2 cases: they will be judged again"] });
+  assert.deepEqual(list.map(cached(s.cacheDir)), [{ verdict: 'none' }, null]);
+});
+
+test("a case is never split across calls: its excerpt and its rules count whole; it costs less than its rules apart", () => {
+  const big = `you: x\ncall Bash: ${'y'.repeat(30_000)}`;
+  const together = [on(commit, big, 'k1'), on(deploy, big, 'k1')];
+  const apart = [on(commit, big, 'k1'), on(deploy, big, 'k2')];
+  assert.equal(estimate(together).calls, 1);
+  assert.equal(estimate(apart).calls, 2);
+  assert.ok(estimate(together).tokens < estimate(apart).tokens * 0.6, JSON.stringify([estimate(together), estimate(apart)]));
 });
 
 test('a quote not in the excerpt, spacing aside, makes the verdict none', async () => {
   const list = [kase(commit, 'you: fix it\ncall Bash: git commit -m a'), kase(commit, 'you: deploy\ncall Bash: git commit -m b'),
     kase(commit, 'you: go\ncall Bash: git commit -m c'), kase(commit, 'you: stop\ncall Bash: git commit -m d'),
     kase(commit, 'you: now\ncall Bash: git commit -m e')];
-  const { s, env } = claude([{ stdout: answer([{ id: '1', verdict: 'broken', quote: 'fix  it\ncall Bash:' },
-    { id: '2', verdict: 'broken', quote: 'git commit -m a' }, { id: '3', verdict: 'kept' }, { id: '4', verdict: 'kept', quote: ' ' },
-    { id: '5', verdict: 'none', quote: 'whatever' }]) }]);
+  const { s, env } = claude([{ stdout: answer([{ case: '1', rule: '1', verdict: 'broken', quote: 'fix  it\ncall Bash:' },
+    { case: '2', rule: '1', verdict: 'broken', quote: 'git commit -m a' }, { case: '3', rule: '1', verdict: 'kept' }, { case: '4', rule: '1', verdict: 'kept', quote: ' ' },
+    { case: '5', rule: '1', verdict: 'none', quote: 'whatever' }]) }]);
   assert.equal((await judge(list, env, s.cacheDir)).judged, 5);
   const of = cached(s.cacheDir);
   // A quote is kept on one line: the report prints it as evidence.
@@ -331,7 +373,7 @@ test('a quote not in the excerpt, spacing aside, makes the verdict none', async 
 test('an unknown verdict, or a case left out, is not cached, and said', async () => {
   const list = [kase(commit, 'you: a\ncall Bash: git commit'), kase(commit, 'you: b\ncall Bash: git commit'),
     kase(commit, 'you: c\ncall Bash: git commit')];
-  const { s, env } = claude([{ stdout: answer([{ id: '1', verdict: 'maybe' }, { id: '2', verdict: 'none' }]) }]);
+  const { s, env } = claude([{ stdout: answer([{ case: '1', rule: '1', verdict: 'maybe' }, { case: '2', rule: '1', verdict: 'none' }]) }]);
   assert.deepEqual(await judge(list, env, s.cacheDir),
     { judged: 1, tokens: 4100, errors: ["claude's answer left out 2 of 3 cases: they will be judged again"] });
   assert.deepEqual(list.map(cached(s.cacheDir)), [null, { verdict: 'none' }, null]);
@@ -340,7 +382,7 @@ test('an unknown verdict, or a case left out, is not cached, and said', async ()
 test('each batch is cached as it returns: a failed batch keeps the others', async () => {
   const big = (c: string) => kase(commit, `you: x\ncall Bash: ${c.repeat(25_000)}`);
   const list = [big('y'), big('z')];
-  const { s, env } = claude([{ match: 'yyyy', stdout: answer([{ id: '1', verdict: 'none' }]) },
+  const { s, env } = claude([{ match: 'yyyy', stdout: answer([{ case: '1', rule: '1', verdict: 'none' }]) },
     { match: 'zzzz', exit: 1, stderr: 'Error: rate limited\n' }]);
   assert.deepEqual(await judge(list, env, s.cacheDir),
     { judged: 1, tokens: 4100, errors: ['claude exited with code 1: Error: rate limited'] });
@@ -367,7 +409,7 @@ test('failures as in the extraction: no claude, an exit code, an error answer, a
 
 test('up to 3 calls at once; every batch cached as it returns; the progress counts calls done', async () => {
   const list = ['g', 'h', 'i', 'j', 'k'].map((c) => kase(commit, `you: x\ncall Bash: ${c.repeat(25_000)}`));
-  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', verdict: 'none' }]) }]);
+  const { s, env, calls } = claude([{ stdout: answer([{ case: '1', rule: '1', verdict: 'none' }]) }]);
   const told: number[][] = [];
   const result = await judge(list, { ...env, FAKE_CLAUDE_WAIT: '500' }, s.cacheDir, (done, of) => told.push([done, of]));
   assert.deepEqual(result, { judged: 5, tokens: 20_500, errors: [] });
