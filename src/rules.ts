@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { applies, type Check, compile, LANGUAGES, verdict } from './check.ts';
+import { applies, type Check, compile, LANGUAGES, sequence, verdict, walk } from './check.ts';
 import type { InstructionFile } from './claude-code.ts';
 import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
@@ -129,7 +129,7 @@ export function verify(raw: unknown, section: Section): Rule | null {
     return noCases ? { ...judged, noCases } : judged;
   }
   const language = rule.check?.language;
-  const demoted = rule.kind === 'tool' ? demotion(rule)
+  const demoted = rule.kind === 'tool' ? demotion(rule) : rule.kind === 'sequence' ? orderDemotion(rule)
     : rule.kind === 'language' && !LANGUAGES.includes(String(language)) ? `language ${language} not supported` : undefined;
   return demoted ? { ...rule, demoted } : rule;
 }
@@ -148,6 +148,29 @@ function demotion(rule: Rule): string | undefined {
   const keeps = rule.keeping.find((e) => call(e) === 'broken');
   if (keeps) return `failed its examples: keeps "${keeps.value}"`;
   if (!rule.keeping.some((e) => call(e) === 'kept')) return 'failed its examples: none of the keeping examples applies';
+}
+
+/**
+ * Why a sequence rule can't be counted, if so: its check, then its examples, each walked as one session that ends with
+ * them: the breaking calls must break it, the keeping ones keep it (a case at least, none broken). Each pattern reads
+ * an example's value as its own field.
+ */
+function orderDemotion(rule: Rule): string | undefined {
+  const s = sequence(rule.check ?? {});
+  if (typeof s === 'string') return s;
+  if (!rule.breaking?.length) return 'no breaking example';
+  if (!rule.keeping?.length) return 'no keeping example';
+  const fields = [s.when.field, (s.first ?? s.then)!.field].filter((f) => f !== undefined);
+  const walked = (calls: Example[]) => {
+    const w = walk<number>(s);
+    const decided = calls.flatMap((e, i) => w.call(e.tool, Object.fromEntries(fields.map((f) => [f, e.value])), i));
+    const left = w.end();
+    return { cases: decided.length + left.length, broken: decided.filter((d) => d.broken).length + left.length };
+  };
+  if (!walked(rule.breaking).broken) return "failed its examples: its breaking calls don't break it";
+  const keeping = walked(rule.keeping);
+  if (keeping.broken) return 'failed its examples: its keeping calls break it';
+  if (!keeping.cases) return 'failed its examples: none of its keeping calls is a case';
 }
 
 /** Why a judgment rule has no case a judge could read, if so: a rule about replies has every reply; another needs a

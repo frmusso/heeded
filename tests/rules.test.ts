@@ -105,6 +105,43 @@ test("a rule's line is looked for under its section's headings, as whole words",
   assert.equal(lineOf(file, 'never force-push', 'gone › git'), 1);
 });
 
+// A sequence rule: its examples are walked as one session each, ending with them.
+const order = sections('## work\n\n- read docs/api.md before editing src/api/\n- run npm run build after changing src/')[0];
+const apiFirst = { quote: 'read docs/api.md before editing src/api/', name: 'read the api doc first', kind: 'sequence',
+  trigger: 'editing the api', check: { field: 'file_path', when: { tool: '^(Edit|Write)$', value: '/src/api/' },
+    first: { field: 'file_path', tool: '^Read$', value: 'docs/api\\.md$' } },
+  breaking: [{ tool: 'Edit', value: '/r/src/api/a.ts' }],
+  keeping: [{ tool: 'Read', value: '/r/docs/api.md' }, { tool: 'Edit', value: '/r/src/api/a.ts' }] };
+const buildThen = { quote: 'run npm run build after changing src/', name: 'build after changing src', kind: 'sequence',
+  trigger: 'changing the source', check: { field: 'file_path', when: { tool: '^(Edit|Write)$', value: '/src/' },
+    then: { field: 'command', tool: '^Bash$', value: '(^|\\s)npm\\s+run\\s+build(\\s|$)' } },
+  breaking: [{ tool: 'Edit', value: '/r/src/a.ts' }, { tool: 'Bash', value: 'npm test' }],
+  keeping: [{ tool: 'Edit', value: '/r/src/a.ts' }, { tool: 'Bash', value: 'npm run build' }] };
+
+test('a sequence rule whose examples, walked as a session each, break and keep it is counted', () => {
+  for (const raw of [apiFirst, buildThen]) {
+    const r = verify(raw, order);
+    assert.equal(r?.kind, 'sequence');
+    assert.equal(r?.demoted, undefined, raw.quote);
+  }
+});
+
+test("a sequence rule is set aside, with the reason, when its check can't be used or its examples say otherwise", () => {
+  const reason = (raw: Record<string, unknown>) => verify(raw, order)?.demoted;
+  assert.equal(reason({ ...apiFirst, check: { ...apiFirst.check, when: undefined } }), 'no calls it is about (when)');
+  assert.equal(reason({ ...apiFirst, check: { ...apiFirst.check, first: undefined } }), 'neither first nor then');
+  assert.equal(reason({ ...apiFirst, check: { ...apiFirst.check, then: buildThen.check.then } }), 'both first and then');
+  assert.equal(reason({ ...apiFirst, check: { ...apiFirst.check, first: { tool: '(' } } }), "regex doesn't compile: (");
+  assert.equal(reason({ ...apiFirst, breaking: [] }), 'no breaking example');
+  assert.equal(reason({ ...apiFirst, keeping: undefined }), 'no keeping example');
+  assert.equal(reason({ ...apiFirst, breaking: apiFirst.keeping }), "failed its examples: its breaking calls don't break it");
+  assert.equal(reason({ ...apiFirst, keeping: apiFirst.breaking }), 'failed its examples: its keeping calls break it');
+  assert.equal(reason({ ...apiFirst, keeping: [{ tool: 'Read', value: '/r/docs/api.md' }] }),
+    'failed its examples: none of its keeping calls is a case');
+  assert.equal(reason({ ...buildThen, breaking: buildThen.keeping }), "failed its examples: its breaking calls don't break it");
+  assert.equal(reason({ ...buildThen, keeping: buildThen.breaking }), 'failed its examples: its keeping calls break it');
+});
+
 test('a tool rule whose pattern is refused is demoted, with the reason', () => {
   assert.equal(verify({ ...gitAdd, check: { ...gitAdd.check, broken: { value: '(a+)+' } } }, section)!.demoted,
     'regex may take exponential time: (a+)+');
