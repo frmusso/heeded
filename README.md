@@ -69,7 +69,7 @@ needs node 22 or later and claude code, signed in: heeded calls your own `claude
 
    ```text
    11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~175k tokens
-   go ahead? [y/N]
+   go ahead? enter shows the report as it is, without spending [y/N]
    ```
 
    `y` reads the rules, judges a first round of cases and prints the report. enter spends nothing: the report shows

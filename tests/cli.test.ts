@@ -115,7 +115,7 @@ test('a terminal, cases waiting: the cases and what they cost, judged on yes; a 
   const { code, out, err, asked } = await heeded([], { terminal: true });
   assert.equal(code, 0);
   assert.equal(err, '1 case to judge · claude haiku · ~3k tokens\njudged 1 case · 4,000 tokens\n');
-  assert.deepEqual(asked, ['go ahead? [y/N] ']);
+  assert.deepEqual(asked, ['go ahead? enter shows the report as it is, without spending [y/N] ']);
   assert.equal(calls(), 1);
   assert.match(out, /\n {4}✗ never git add -A {2}kept 0% of 1 {2}broken 1× {2}last /);
 });
@@ -157,7 +157,7 @@ test('sections to read and cases: one question with the ceiling, then read, judg
   assert.equal(code, 0);
   assert.equal(err, '1 rule section to read, then cases to judge · claude sonnet and haiku · up to ~157k tokens\n'
     + 'read 1 section · 4,000 tokens\njudged 1 case · 4,000 tokens\n');
-  assert.deepEqual(asked, ['go ahead? [y/N] ']);
+  assert.deepEqual(asked, ['go ahead? enter shows the report as it is, without spending [y/N] ']);
   assert.equal(calls(), 2);
   assert.ok(existsSync(join(s.cacheDir, 'heeded', `${sections(content)[0].hash}.json`)));
   assert.match(out, /✗ never git add -A/);
@@ -295,7 +295,7 @@ test('heeded rules on a terminal asks to read the new sections, and only that', 
   const { code, out, err, asked } = await heeded(['rules'], { terminal: true });
   assert.equal(code, 0);
   assert.equal(err, '1 rule section to read · claude sonnet · ~7k tokens\nread 1 section · 4,000 tokens\n');
-  assert.deepEqual(asked, ['go ahead? [y/N] ']);
+  assert.deepEqual(asked, ['go ahead? enter shows the report as it is, without spending [y/N] ']);
   assert.equal(calls(), 1);
   // Counted again after the reading, lines included.
   assert.match(out, /✓ :1  never git add -A/);
@@ -396,7 +396,7 @@ test('--all: the cases now and the most they can grow to; judged round after rou
   const { heeded, calls } = commits(12, [kept]);
   const { code, err, asked: questions, out } = await heeded(['--all'], { terminal: true });
   assert.equal(code, 0);
-  assert.deepEqual(questions, ['go ahead? [y/N] ']);
+  assert.deepEqual(questions, ['go ahead? enter shows the report as it is, without spending [y/N] ']);
   // 8 cases first; they apply, so the other 4 are taken in a second round.
   assert.match(err, /^8 cases to judge, more if their rules apply · claude haiku · ~\d+k tokens, at most ~\d+k\n/);
   assert.match(err, /\njudged 12 cases · 8,000 tokens\n$/);
@@ -417,7 +417,7 @@ test('--all with a section to read: the reading first, then the judging, each as
   for (const [replies, spent] of [[['y', 'n'], 1], [['y', 'y'], 2]] as const) {
     const { heeded, calls } = setup({ replies: [answer, confirmed] });
     const { err, asked: questions } = await heeded(['--all'], { terminal: true, reply: [...replies] });
-    assert.deepEqual(questions, ['go ahead? [y/N] ', 'go ahead? [y/N] ']);
+    assert.deepEqual(questions, ['go ahead? enter shows the report as it is, without spending [y/N] ', 'go ahead? enter shows the report as it is, without spending [y/N] ']);
     assert.match(err, /^1 rule section to read first · claude sonnet · ~7k tokens\nread 1 section · 4,000 tokens\n1 case to judge · claude haiku · ~3k tokens\n/);
     assert.equal(calls(), spent);
   }

@@ -160,7 +160,8 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
     if (errors.length) code = 1;
   };
   // ctrl-c or ctrl-d at the question is a no.
-  const yes = async () => /^y(es)?$/i.test((await io.ask('go ahead? [y/N] ').catch(() => '')).trim());
+  const yes = async () => /^y(es)?$/i.test((await io.ask('go ahead? enter shows the report as it is, without spending [y/N] ')
+    .catch(() => '')).trim());
   const distinct = [...new Map(pending.map((p) => [p.section.hash, p.section])).values()];
   /** Reads the new sections, then counts again: the rules just read have cases of their own. False when none was
    * read. */
