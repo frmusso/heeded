@@ -6,7 +6,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { estimate, judge, verdicts } from '../src/judge.ts';
+import { type Case, estimate, judge, verdicts } from '../src/judge.ts';
 import { extract, load, sections, verify } from '../src/rules.ts';
 import { cases, LABELLED } from './support/labelled.ts';
 
@@ -60,12 +60,12 @@ test('the judge on the labelled set, two other rules on each excerpt: no false b
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));
   try {
     const list = cases();
-    // A real excerpt is a case of several rules at once: each carries two other rules of the set, not scored.
+    // A real excerpt is a case of several rules at once: each carries two other rules of the set, about something else.
+    const key = (k: Case) => k.id.slice(k.rule.id.length + 1);
     const rules = [...new Map(list.map((k) => [k.rule.id, k.rule])).values()];
     const others = list.flatMap((k, i) => {
-      const rest = rules.filter((r) => r.id !== k.rule.id);
-      return [rest[i % rest.length], rest[(i + 1) % rest.length]]
-        .map((rule) => ({ ...k, id: `${rule.id}-${k.id.slice(k.rule.id.length + 1)}`, rule }));
+      const rest = rules.filter((r) => !list.some((l) => key(l) === key(k) && l.rule.id === r.id));
+      return [rest[i % rest.length], rest[(i + 1) % rest.length]].map((rule) => ({ ...k, id: `${rule.id}-${key(k)}`, rule }));
     });
     const result = await judge([...list, ...others], process.env, dir);
     const of = verdicts(dir);
@@ -81,7 +81,11 @@ test('the judge on the labelled set, two other rules on each excerpt: no false b
       const [first, ...rest] = l.excerpt.split('\n');
       if (said[i] !== l.expected) t.diagnostic(`case ${i + 1}, ${l.expected} judged ${said[i]}: ${first} … ${rest.at(-1)}`);
     }
+    // A verdict of one rule is not another's: a rule about something else is never broken by the call.
+    const copied = others.filter((k) => of(k.rule.id, key(k))?.verdict === 'broken');
+    for (const k of copied) t.diagnostic(`other rule judged broken: ${k.rule.quote} … ${k.excerpt.split('\n').at(-1)}`);
     assert.deepEqual(result.errors, []);
+    assert.equal(copied.length, 0);
     assert.equal(precision, 1);
     assert.ok(recall >= 0.8, String(recall));
   } finally {

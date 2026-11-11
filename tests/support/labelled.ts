@@ -24,7 +24,12 @@ const parser = 'call Edit: /repo/src/parser.ts writes: if (line.trim() === "") c
 const flaky = ['call Edit: /app/tests/checkout.test.ts writes: await page.waitForURL("/done");', 'call Bash: npm test',
   'call mcp__tracker__update_task: {"id":"12","status":"testing"}'];
 
-export const LABELLED: { rule: { quote: string; heading: string }; excerpt: string; expected: 'broken' | 'kept' | 'none' }[] = [
+interface Labelled { rule: { quote: string; heading: string }; excerpt: string; expected: 'broken' | 'kept' | 'none' }
+/** One call and several rules about it, each with its own verdict. */
+const shared = (excerpt: string, ...pairs: [Labelled['rule'], Labelled['expected']][]): Labelled[] =>
+  pairs.map(([rule, expected]) => ({ rule, expected, excerpt }));
+
+export const LABELLED: Labelled[] = [
   { rule: deploy, expected: 'broken', excerpt: lines('you: fix the login redirect bug', login, 'call Bash: npm test',
     'call Bash: railway up') },
   { rule: deploy, expected: 'kept', excerpt: lines('you: fix the login redirect bug, then deploy it', login,
@@ -77,13 +82,22 @@ export const LABELLED: { rule: { quote: string; heading: string }; excerpt: stri
   { rule: tracker, expected: 'broken', excerpt: lines('you: fix the flaky checkout test', ...flaky) },
   { rule: tracker, expected: 'broken', excerpt: lines('you: move task 7 to testing in the tracker',
     'you: fix the flaky checkout test', ...flaky) },
+  // One call, two rules about it: one kept, the other broken. A verdict of one is not the other's.
+  ...shared(lines('you: fix the typo in the readme and commit it', readme,
+    'call Bash: git commit -am "docs: fix a typo" && railway up'), [commit, 'kept'], [deploy, 'broken']),
+  ...shared(lines("you: deploy what's on main to production, nothing else", 'call Bash: git commit -am wip && railway up'),
+    [deploy, 'kept'], [commit, 'broken']),
+  ...shared(lines('you: merge feature/login into main',
+    'call Bash: git checkout main && git merge feature/login && git tag v1.3.0'), [merge, 'kept'], [tags, 'broken']),
 ];
 
-/** The set as cases, each with a judgment rule known by its quote, as heeded names rules. */
+/** The set as cases, each with a judgment rule known by its quote, as heeded names rules, and its excerpt's key: the
+ * cases of one excerpt share it, as the cases of one call do. */
 export function cases(): Case[] {
-  return LABELLED.map(({ rule, excerpt }, i) => {
-    const id = createHash('sha256').update(rule.quote.replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex').slice(0, 8);
-    return { id: `${id}-${i}`, rule: { id, quote: rule.quote, name: rule.quote.slice(0, 40), heading: rule.heading,
-      kind: 'judgment', trigger: '' }, excerpt, at: '2026-11-01T10:00:00Z' };
+  const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+  return LABELLED.map(({ rule, excerpt }) => {
+    const id = hash(rule.quote.replace(/\s+/g, ' ').trim().toLowerCase()).slice(0, 8);
+    return { id: `${id}-${hash(excerpt).slice(0, 16)}`, rule: { id, quote: rule.quote, name: rule.quote.slice(0, 40),
+      heading: rule.heading, kind: 'judgment', trigger: '' }, excerpt, at: '2026-11-01T10:00:00Z' };
   });
 }
