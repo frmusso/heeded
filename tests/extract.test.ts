@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { estimate, extract, load, rulesOf, type Section, sections } from '../src/rules.ts';
+import { estimate, extract, load, PROMPT_VERSION, rulesOf, type Section, sections } from '../src/rules.ts';
 import { installFakeClaude, type Reply } from './support/fake-claude.ts';
 import { sandbox } from './support/sandbox.ts';
 
@@ -178,9 +178,29 @@ test('the prompt gives cases to every rule a call or reply can show: what is wri
     'git commit commands with a message', 'the calls that run it', 'never a call that only keeps the rule',
     'always with keeping', 'A check without them is not used', 'whether a tool can check it or not',
     'the rule is listed all the same',
-    'Leave the check out only when no call or reply can show the rule', 'the order of the work']) {
+    'Leave the check out only when no call or reply can show the rule']) {
     assert.ok(stdin.includes(words), words);
   }
+});
+
+test('the prompt finds sequence rules: a call before or after another, the examples a series of calls (prompt v5)', async () => {
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  await extract(pending(section('- run npm run build after changing src/')), env, s.cacheDir);
+  const stdin = calls()[0].stdin.replace(/\s+/g, ' ');
+  for (const words of ['"sequence" when the rule asks for a call before or after another call',
+    '"first", the call that must have come earlier in the same session',
+    '"then", the call that must follow it before the agent\'s turn ends', 'the calls of a session, in order, that break it',
+    'the value of the field its own pattern reads', 'is "judgment"']) {
+    assert.ok(stdin.includes(words), words);
+  }
+  // The order of the work is no longer a reason to leave a rule unchecked.
+  assert.ok(!stdin.includes('the order of the work'), stdin);
+  const rule = JSON.parse(calls()[0].argv[6]).properties.sections.items.properties.rules.items.properties;
+  assert.ok(rule.kind.enum.includes('sequence'));
+  for (const step of ['first', 'then']) {
+    assert.deepEqual(Object.keys(rule.check.properties[step].properties), ['field', 'tool', 'value', 'data']);
+  }
+  assert.equal(PROMPT_VERSION, 5);
 });
 
 test('the schema lets a judgment rule find replies', async () => {

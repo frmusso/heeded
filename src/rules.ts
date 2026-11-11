@@ -8,7 +8,7 @@ import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
 
 /** The extraction prompt's version: part of every cache key, so a new prompt reads every section again. */
-export const PROMPT_VERSION = 4;
+export const PROMPT_VERSION = 5;
 export const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
@@ -299,6 +299,8 @@ export function estimate(sections: Section[]): { calls: number; tokens: number }
 }
 
 const PATTERNS = { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' }, data: { type: 'string' } } };
+/** A sequence rule's other call: a pattern with a field of its own. */
+const STEP = { type: 'object', properties: { field: { type: 'string' }, ...PATTERNS.properties } };
 const EXAMPLES = {
   type: 'array',
   items: { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' } }, required: ['tool', 'value'] },
@@ -319,13 +321,13 @@ const SCHEMA = JSON.stringify({
               properties: {
                 quote: { type: 'string' },
                 name: { type: 'string' },
-                kind: { enum: ['tool', 'language', 'judgment'] },
+                kind: { enum: ['tool', 'language', 'judgment', 'sequence'] },
                 trigger: { type: 'string' },
                 check: {
                   type: 'object',
                   properties: {
                     field: { type: 'string' }, when: PATTERNS, broken: PATTERNS, ignoreCase: { type: 'boolean' },
-                    language: { type: 'string' }, reply: { type: 'boolean' },
+                    language: { type: 'string' }, reply: { type: 'boolean' }, first: STEP, then: STEP,
                   },
                 },
                 breaking: EXAMPLES,
@@ -354,8 +356,10 @@ For each rule:
 - name: a summary of at most 40 characters, in the rule's own language.
 - kind: "tool" when a single tool call shows, without doubt and whatever came before it, whether the rule was kept or
   broken; "language" for the language the agent must use in its replies to the user (not in code, commits or files);
-  "judgment" for everything else. A rule with an exception, or a condition one call can't show (the user's go or
-  request, being asked first, a folder or a sub-project, a time, before or after something else), is "judgment".
+  "sequence" when the rule asks for a call before or after another call, each shown by a call (read a file before
+  editing another, run the build after changing the source, run the tests before merging); "judgment" for everything
+  else. A rule with an exception, or a condition one call can't show (the user's go or request, being asked first, a
+  folder or a sub-project, a time, before or after something no call shows), is "judgment".
 - trigger: when the rule applies, in a few words ("staging files with git").
 
 A "language" rule has check: { "language": "<two-letter ISO 639-1 code>" }.
@@ -385,6 +389,12 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
   name holding the forbidden word, a read-only form of the command (git tag alone lists tags), its --help, a search or
   an echo naming it. A value is the field's whole value: for Bash, a whole command line.
 
+A "sequence" rule has a check over two calls of a session: "field" and "when", as a tool rule's, for the calls it is
+about; and either "first", the call that must have come earlier in the same session, or "then", the call that must
+follow it before the agent's turn ends (the user's next message): each { "field", "tool", "value", "data" }, read as
+"when" is. breaking: the calls of a session, in order, that break it (a call it is about without the other); keeping:
+the calls of one that keeps it. Each example { "tool", "value" } gives the value of the field its own pattern reads.
+
 A "judgment" rule has a check that finds the cases a judge will read whenever some calls or replies can show it kept
 or broken, however many they are: { "reply": true } for a rule about what the agent tells the user; else the calls it
 is about, as a tool rule's "field" and "when", without "broken", and always with keeping: one or two calls that are
@@ -395,8 +405,8 @@ read of a file the rule forbids editing). A check without them is not used.
   reads what each one writes.
 - A rule about commit messages has the git commit commands with a message ("data": "\S" in "when").
 - A rule about a command, a setting or a tool has the calls that run it.
-Leave the check out only when no call or reply can show the rule (how to plan, what to remember, the order of the
-work): the rule is listed all the same.
+Leave the check out only when no call or reply can show the rule (how to plan, what to remember): the rule is listed
+all the same.
 `;
 
 /**
