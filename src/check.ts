@@ -246,6 +246,9 @@ const DECIDED = 20;
 const JUDGED = 40;
 const allowed = (t: Tally) => (t.rule.kind !== 'judgment' ? Infinity
   : Math.max(0, t.all.applied ? Math.min(JUDGED - t.judged, DECIDED - t.all.applied) : PROBE - t.judged));
+/** Whether a rule's sample may ever take another case. Unlike `allowed`, never true again once false: a sample stopped
+ * after 8 cases that didn't apply opens again when a later case applies. */
+const open = (t: Tally) => t.rule.kind !== 'judgment' || Math.min(JUDGED - t.judged, DECIDED - t.all.applied) > 0;
 /** The most a rule may still take: a judgment rule whose sample hasn't ended, every case up to 40 judged. */
 const most = (t: Tally) => (t.rule.kind !== 'judgment' ? t.unjudged : allowed(t) ? Math.min(t.unjudged, JUDGED - t.judged) : 0);
 
@@ -404,8 +407,8 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     const v = verdictOf(t.rule.id, x.key);
     if (!v) {
       t.unjudged++;
-      // A rule whose sample is full takes no more cases.
-      if (allowed(t)) wait(t.waiting, x);
+      // A rule whose sample is full takes no more cases; one stopped by its first 8 still does, as it may open again.
+      if (open(t)) wait(t.waiting, x);
       return;
     }
     t.judged++;

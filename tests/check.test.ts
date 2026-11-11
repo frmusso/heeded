@@ -505,6 +505,8 @@ test('a judgment rule is judged on 8 cases first: none applies, it stops there; 
   assert.deepEqual(waiting(30, [{ verdict: 'kept' }, ...times(7, 'none')]), [19, 19]);
   assert.deepEqual(waiting(23, times(18, 'kept')), [2, 2]);
   assert.deepEqual(waiting(22, times(20, 'kept')), [0, 0]);
+  // A sample stopped after 8 none opens again when a later case applies: the cases met while it was stopped wait too.
+  assert.deepEqual(waiting(14, [...times(8, 'none'), ...Array(5).fill(undefined), { verdict: 'kept' }]), [5, 5]);
   // A tool rule's candidates have no sample.
   const adds = feed([start(), files({ '/r/CLAUDE.md': 'A' }),
     ...Array.from({ length: 12 }, (_, i) => bash(`git add -A d${i}`, { at: `2026-11-02T10:${String(i).padStart(2, '0')}:00Z` }))],
