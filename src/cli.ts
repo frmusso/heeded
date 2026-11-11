@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // The heeded command: arguments, the two commands, the question before spending, exit codes.
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { counter } from './check.ts';
 import { read } from './claude-code.ts';
 import { BUDGET, type Case, estimate as judgingEstimate, JUDGE_MODEL, judge, select, verdicts } from './judge.ts';
 import { approx, json, type Report, rules, text } from './report.ts';
+import { redact } from './redact.ts';
 import { estimate, extract, lineOf, MODEL, type Pending, remember, rulesOf } from './rules.ts';
 
 const HELP = `heeded — did your coding agent follow its instructions?
@@ -42,28 +43,18 @@ interface IO {
 
 /** One pass over the folder's transcripts with the rules and verdicts cached so far: the report, the sections to read,
  * the cases waiting for the judge, and what the most the rules may still take would cost. */
-async function scan(configDir: string, folder: string, cacheDir: string):
+async function scan(configDir: string, folder: string, cacheDir: string, home: string):
   Promise<{ report: Report; pending: Pending[]; waiting: { tool: Case[][]; judgment: Case[][] }; mostTokens: number }> {
   const count = counter(rulesOf(cacheDir), verdicts(cacheDir));
   const { unrecognized } = await read(configDir, folder, count.on);
   for (const v of count.readVersions()) remember(cacheDir, v.identity, v.section.hash, v.at);
   const data = count.result();
-  // Where each rule is written now, what the user opens to rewrite or remove it: its files as they are on disk, a file
-  // gone read as empty.
-  const onDisk = new Map<string, string>();
-  const content = (file: string) => {
-    if (!onDisk.has(file)) {
-      try {
-        onDisk.set(file, readFileSync(file, 'utf8'));
-      } catch {
-        onDisk.set(file, '');
-      }
-    }
-    return onDisk.get(file)!;
-  };
+  // Where each rule is written now, what the user opens to rewrite or remove it.
+  // Claude Code reads the user's own file from ~/.claude whatever the config dir.
+  const content = onDisk(folder, [configDir, join(home, '.claude')]);
   for (const rule of data.rules) {
     for (const file of rule.files) {
-      const line = lineOf(content(file), rule.quote);
+      const line = lineOf(content(file), rule.quote, rule.heading);
       if (line) rule.lines[file] = line;
     }
   }
@@ -73,6 +64,29 @@ async function scan(configDir: string, folder: string, cacheDir: string):
   const each = listed.length ? judgingEstimate(listed).tokens / listed.length : 0;
   return { report: { folder, configDir, unrecognized, ...data, toJudgeTokens: Math.round(each * data.toJudge) },
     pending: count.pending(), waiting, mostTokens: Math.round(each * data.atMost) };
+}
+
+/** Instruction files as they are on disk now, secrets redacted as in what their rules were read from (a redaction
+ * keeps every line); empty for a file gone. Read only in the folder, the folders above it and the agent's own: where
+ * the user already gave access, so no privacy prompt for another folder. And only a regular file under 1 MB: a path
+ * from a transcript may name a pipe, which would never end. */
+function onDisk(folder: string, own: string[]): (file: string) => string {
+  const read = new Map<string, string>();
+  const allowed = (file: string) => [folder, ...own].some((dir) => file.startsWith(`${dir}/`))
+    || `${folder}/`.startsWith(dirname(file).replace(/\/?$/, '/'));
+  return (file) => {
+    if (!read.has(file)) {
+      let text = '';
+      try {
+        const stat = allowed(file) ? statSync(file) : null;
+        if (stat?.isFile() && stat.size < 1_000_000) text = redact(readFileSync(file, 'utf8'));
+      } catch {
+        // gone, or not readable: no line
+      }
+      read.set(file, text);
+    }
+    return read.get(file)!;
+  };
 }
 
 const thousands = (n: number) => n.toLocaleString('en-US');
@@ -115,6 +129,7 @@ export async function main(argv: string[], io: IO): Promise<number> {
   const [command, ...rest] = args.positionals;
   if (command !== undefined && command !== 'rules') return usage(`unknown command ${command}`);
   if (rest.length) return usage(`unexpected ${rest.join(' ')}`);
+  if (command === 'rules' && args.values.all) return usage('--all judges cases, and heeded rules never judges');
   if (args.values.help) {
     io.out(HELP);
     return 0;
@@ -138,7 +153,7 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
   const home = io.env.HOME || homedir();
   const configDir = io.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
   const cacheDir = io.env.XDG_CACHE_HOME || join(home, '.cache');
-  let { report, pending, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir);
+  let { report, pending, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir, home);
   let code = 0;
   const failed = (errors: string[]) => {
     for (const e of errors) io.err(`heeded: ${e}\n`);
@@ -154,7 +169,7 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
       (progress) => extract(pending, io.env, cacheDir, progress));
     if (found.read) io.err(`read ${plural(found.read, 'section')} · ${thousands(found.tokens)} tokens\n`);
     failed(found.errors);
-    if (found.read) ({ report, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir));
+    if (found.read) ({ report, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir, home));
     return found.read > 0;
   };
   /** Asks about the new sections alone, and reads them on yes. */
@@ -177,7 +192,7 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
       judged += done.judged;
       tokens += done.tokens;
       errors.push(...done.errors);
-      if (done.judged) ({ report, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir));
+      if (done.judged) ({ report, waiting, mostTokens } = await scan(configDir, io.cwd, cacheDir, home));
       if (!all || !done.judged) break;
     }
     if (judged) io.err(`judged ${plural(judged, 'case')} · ${thousands(tokens)} tokens\n`);
@@ -187,7 +202,7 @@ async function run(command: string | undefined, asJson: boolean, all: boolean, i
   // Reading sections and judging cases spend the user's quota: only when asked on a terminal, after what the run may
   // spend. Every call costs ~4k tokens: an estimate is never under a thousand.
   if (io.terminal && command === 'rules') {
-    // The rules and their checks don't depend on verdicts: only new sections change the list.
+    // The rules and how each is checked: no verdict changes them, only new sections do.
     if (distinct.length) await askToRead('');
   } else if (io.terminal && (distinct.length || report.toJudge > 0)) {
     if (!all) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { counter } from '../src/check.ts';
 import { read } from '../src/claude-code.ts';
@@ -40,7 +40,7 @@ test('heeded --version', () => {
 });
 
 test('an unknown option or command: exit 2, one lowercase line on stderr', () => {
-  for (const args of [['--nope'], ['nope'], ['rules', 'more']]) {
+  for (const args of [['--nope'], ['nope'], ['rules', 'more'], ['rules', '--all']]) {
     const { status, stdout, stderr } = run(...args);
     assert.equal(status, 2, args.join(' '));
     assert.equal(stdout, '');
@@ -231,25 +231,74 @@ test("each rule's line in its file as it is on disk now; none once its words are
   assert.match((await heeded([])).out, /\n {4}\? never git add -A {2}1 to confirm\n/);
   rmSync(md);
   assert.deepEqual(JSON.parse((await heeded(['--json'])).out).rules[0].lines, {});
+  assert.match((await heeded([])).out, /\n {4}\? never git add -A {2}1 to confirm\n/);
+});
+
+test('lines are looked for where heeded runs, above it and in the agent\'s folder, in files under 1 MB', async () => {
+  const { s, repo, heeded } = setup({ session: false, cached: true });
+  const above = join(s.root, 'CLAUDE.md');
+  const own = join(s.configDir, 'CLAUDE.md');
+  const elsewhere = join(s.root, 'w', 'CLAUDE.md');
+  const [big, inner] = [join(repo, 'big', 'CLAUDE.md'), join(repo, 'sub', 'CLAUDE.md')];
+  for (const f of [above, own, elsewhere, big, inner]) mkdirSync(dirname(f), { recursive: true });
+  for (const f of [above, own, elsewhere, inner]) writeFileSync(f, content);
+  writeFileSync(big, `${content}\n${'x'.repeat(1_000_000)}`);
+  const files = [above, own, elsewhere, big, inner].map((path) => ({ path, type: 'Project', content }));
+  writeSession(s.configDir, repo, 'a', [instructions(files), assistant({ id: 'm1', text: 'ok' })]);
+  assert.deepEqual(JSON.parse((await heeded(['--json'])).out).rules[0].lines, { [above]: 1, [own]: 1, [inner]: 1 });
+});
+
+test("with another config dir, the user's own file in ~/.claude still has its lines: claude code loads it there", async () => {
+  const { s, repo, heeded } = setup({ session: false, cached: true });
+  const other = join(s.root, 'home', '.claude-other');
+  const user = join(s.configDir, 'CLAUDE.md');
+  writeFileSync(user, content);
+  writeSession(other, repo, 'a', [instructions([{ path: user, type: 'User', content }]), assistant({ id: 'm1', text: 'ok' })]);
+  const doc = JSON.parse((await heeded(['--json'], { env: { CLAUDE_CONFIG_DIR: other } })).out);
+  assert.deepEqual(doc.rules[0].lines, { [user]: 1 });
+});
+
+test('a rule whose words hold a secret has its line too: they are looked for as it was read, redacted', async () => {
+  const { s, repo, heeded } = setup({ session: false });
+  const md = join(repo, 'CLAUDE.md');
+  const secret = '- never print `sk-ant-0123456789abcdefghij` in a reply';
+  writeFileSync(md, `# app\n\n${secret}\n`);
+  writeSession(s.configDir, repo, 'a', [instructions([{ path: md, type: 'Project', content: secret }]),
+    assistant({ id: 'm1', text: 'ok' })]);
+  save(s.cacheDir, sections(secret)[0].hash, [{ quote: 'never print `…` in a reply', name: 'never print the key',
+    kind: 'judgment', trigger: 'replying', check: { reply: true } }]);
+  assert.deepEqual(JSON.parse((await heeded(['--json'])).out).rules[0].lines, { [md]: 3 });
+});
+
+test('a path that is a pipe is not read: heeded doesn\'t wait on it', () => {
+  const { s, repo } = setup({ session: false, cached: true });
+  const md = join(repo, 'CLAUDE.md');
+  spawnSync('mkfifo', [md]);
+  writeSession(s.configDir, repo, 'a', [instructions([{ path: md, type: 'Project', content }]),
+    assistant({ id: 'm1', tool: { id: 'tu1', name: 'Bash', input: { command: 'git add -A' } } })]);
+  const run = spawnSync(process.execPath, [cli, '--json'],
+    { cwd: repo, env: s.env, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout).rules[0].lines, {});
 });
 
 test('heeded rules never judges: what it lists doesn\'t depend on verdicts', async () => {
-  for (const all of [[], ['--all']]) {
-    const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
-    const { code, err, asked } = await heeded(['rules', ...all], { terminal: true });
-    assert.equal(code, 0);
-    assert.deepEqual([err, asked, calls()], ['', [], 0], all.join(''));
-  }
+  const { heeded, calls } = setup({ cached: true, replies: [confirmed] });
+  const { code, err, asked } = await heeded(['rules'], { terminal: true });
+  assert.equal(code, 0);
+  assert.deepEqual([err, asked, calls()], ['', [], 0]);
 });
 
 test('heeded rules on a terminal asks to read the new sections, and only that', async () => {
-  const { heeded, calls } = setup({ replies: [answer, confirmed] });
+  const { repo, heeded, calls } = setup({ replies: [answer, confirmed] });
+  writeFileSync(join(repo, 'CLAUDE.md'), content);
   const { code, out, err, asked } = await heeded(['rules'], { terminal: true });
   assert.equal(code, 0);
   assert.equal(err, '1 rule section to read · claude sonnet · ~6k tokens\nread 1 section · 4,000 tokens\n');
   assert.deepEqual(asked, ['go ahead? [y/N] ']);
   assert.equal(calls(), 1);
-  assert.match(out, /✓ never git add -A/);
+  // Counted again after the reading, lines included.
+  assert.match(out, /✓ :1  never git add -A/);
 });
 
 test('colour only when stdout is a terminal and NO_COLOR is not set', async () => {

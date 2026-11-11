@@ -17,7 +17,7 @@ test('the json document: heeded 2 first, then the report, two-space indented', (
     files: ['/home/someone/repos/app/CLAUDE.md'],
     rules: [{
       id: '3f2a9c1e', name: 'never sudo', quote: 'never `sudo`', files: ['/home/someone/repos/app/CLAUDE.md'],
-      lines: { '/home/someone/repos/app/CLAUDE.md': 12 },
+      heading: 'app › safety', lines: { '/home/someone/repos/app/CLAUDE.md': 12 },
       status: 'demoted', reason: 'failed its examples: breaks "sudo ls"',
       check: { field: 'command', when: { tool: '^Bash$' }, broken: { value: '^sudo ' } },
       applied: 0, broken: 0, judged: 0, toJudge: 0, afterCompaction: { applied: 0, broken: 0 },
@@ -39,9 +39,9 @@ test('the json document of an empty history', () => {
 
 // The sketch of the report, with numbers that give its percentages.
 const r = (name: string, status: RuleData['status'], applied: number, broken: number, more: Partial<RuleData> = {}): RuleData => ({
-  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], lines: {}, status, applied, broken, judged: 0,
-  toJudge: 0,
-  afterCompaction: { applied: 0, broken: 0 }, byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]), tokens: 5, evidence: [],
+  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], heading: '', lines: {}, status,
+  applied, broken, judged: 0, toJudge: 0, afterCompaction: { applied: 0, broken: 0 },
+  byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]), tokens: 5, evidence: [],
   ...more,
 });
 const seen = (at: string, session: string, text: string) => ({ at, session: `${session}-0000-4000-8000-000000000000`, agent: null, text });

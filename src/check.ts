@@ -195,6 +195,8 @@ export interface RuleData {
   name: string;
   quote: string;
   files: string[];
+  /** The headings of its section, ` › ` between them: where in a file to look for its words. */
+  heading: string;
   /** Its line in each of its files as they are on disk now, for the files that still hold its words. */
   lines: Record<string, number>;
   status: 'broken' | 'kept' | 'to-confirm' | 'never-applied' | 'judgment' | 'demoted';
@@ -503,6 +505,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           name: rule.name,
           quote: rule.quote,
           files: [...files],
+          heading: rule.heading,
           lines: {},
           status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
             : all.broken ? 'broken' : all.applied ? 'kept' : unjudged ? 'to-confirm' : 'never-applied',

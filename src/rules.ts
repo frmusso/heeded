@@ -77,12 +77,29 @@ export interface Rule {
 
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
 
-/** The line a rule's words start on in a file's text, however they are spaced and wrapped there; null when the text no
- * longer holds them. What the user opens to rewrite or remove the rule. */
-export function lineOf(content: string, quote: string): number | null {
-  const words = quote.split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const at = words.length ? new RegExp(words.join('\\s+')).exec(content)?.index : undefined;
-  return at === undefined ? null : content.slice(0, at).split('\n').length;
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const WORD = /[\p{L}\p{N}_]/u;
+
+/** The line a rule's words start on in a file's text, however they are spaced and wrapped there: under its section's
+ * headings (` › ` between them), as whole words, so the same words earlier (an intro, another section) aren't taken
+ * for it. Null when the text no longer holds them. What the user opens to rewrite or remove the rule. */
+export function lineOf(content: string, quote: string, heading: string): number | null {
+  const words = quote.split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  // Down the section's headings, as far as the file still has them: from the line of the last one found.
+  let from = 0;
+  let next = 0;
+  for (const title of heading ? heading.split(' › ') : []) {
+    const at = new RegExp(`^#{1,6}[ \\t]+${escape(title)}[ \\t]*\\r?$`, 'mu').exec(content.slice(next));
+    if (!at) break;
+    from = next + at.index;
+    next = from + at[0].length;
+  }
+  const [first, last] = [[...words[0]][0], [...words.at(-1)!].at(-1)!];
+  const whole = new RegExp(`${WORD.test(first) ? '(?<![\\p{L}\\p{N}_])' : ''}${words.map(escape).join('\\s+')}`
+    + `${WORD.test(last) ? '(?![\\p{L}\\p{N}_])' : ''}`, 'u');
+  const at = whole.exec(content.slice(from))?.index;
+  return at === undefined ? null : content.slice(0, from + at).split('\n').length;
 }
 
 /**

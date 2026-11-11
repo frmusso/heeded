@@ -59,7 +59,8 @@ instruction files (from the events) ──▶ rules.ts      judge.ts: select wit
   sections → cache → verify; new sections → claude -p
 ```
 
-- `src/cli.ts`: arguments, the two commands, the question before spending, exit codes. `main(argv, io)` takes its
+- `src/cli.ts`: arguments, the two commands, the question before spending, exit codes, and each rule's line in its
+  file as it is on disk (only in the folder, the folders above it and the agent's own). `main(argv, io)` takes its
   process as `io`, so tests drive every path in-process.
 - `src/claude-code.ts`: the only module that knows claude code. finds the transcripts of the sessions run in a folder
   and streams them, one pass per file, into neutral events (`transcript`, `instructions`, `compaction`, `call`,

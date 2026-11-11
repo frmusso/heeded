@@ -84,13 +84,25 @@ test('a name is cut to 40 characters, and says so', () => {
 
 test("a rule's line in its file: where its words start, spacing aside; none when the file no longer has them", () => {
   const file = '# app\r\n\n## git\n\n- never `git add -A`: stage files\n  by name.\n- talk  to the user\tin italian (*always*)\n';
-  assert.equal(lineOf(file, 'never `git add -A`'), 5);
-  assert.equal(lineOf(file, 'stage files by name.'), 5);
-  assert.equal(lineOf(file, 'by name.'), 6);
-  assert.equal(lineOf(file, 'talk to the user in italian (*always*)'), 7);
-  assert.equal(lineOf(file, 'never `git add -a`'), null);
-  assert.equal(lineOf(file, 'stage files by name!'), null);
-  assert.equal(lineOf(file, ' '), null);
+  assert.equal(lineOf(file, 'never `git add -A`', 'app › git'), 5);
+  assert.equal(lineOf(file, 'stage files by name.', 'app › git'), 5);
+  assert.equal(lineOf(file, 'by name.', 'app › git'), 6);
+  assert.equal(lineOf(file, 'talk to the user in italian (*always*)', 'app › git'), 7);
+  assert.equal(lineOf(file, 'never `git add -a`', 'app › git'), null);
+  assert.equal(lineOf(file, 'stage files by name!', 'app › git'), null);
+  assert.equal(lineOf(file, ' ', 'app › git'), null);
+});
+
+test("a rule's line is looked for under its section's headings, as whole words", () => {
+  const file = 'never force-push is a rule below\n\n# app\n\n## notes\n\n- never force-push\n\n## git\n\n'
+    + '- never force-push, and reuse pnpm\n- use pnpm\n';
+  assert.equal(lineOf(file, 'never force-push', 'app › git'), 11);
+  assert.equal(lineOf(file, 'never force-push', 'app › notes'), 7);
+  assert.equal(lineOf(file, 'never force-push', ''), 1);
+  assert.equal(lineOf(file, 'use pnpm', 'app › git'), 12);
+  // A heading no longer there: from the last one found.
+  assert.equal(lineOf(file, 'never force-push', 'app › gone'), 7);
+  assert.equal(lineOf(file, 'never force-push', 'gone › git'), 1);
 });
 
 test('a tool rule whose pattern is refused is demoted, with the reason', () => {
