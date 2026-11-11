@@ -51,6 +51,34 @@ $ npx heeded
 
 ## use
 
+needs node 22 or later and claude code, signed in: heeded calls your own `claude` to read rules and to judge.
+
+1. **run it in a project** you've worked on with claude code:
+
+   ```sh
+   cd ~/code/my-app
+   npx heeded
+   ```
+
+2. **say yes, or not yet.** reading the rules and judging cost tokens from your claude account, so heeded shows the
+   estimate and asks before spending anything:
+
+   ```text
+   11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~175k tokens
+   go ahead? [y/N]
+   ```
+
+   `y` reads the rules, judges a first round of cases and prints the report. enter spends nothing: the report shows
+   what is already cached, on a first run the sessions found and the sections still to read.
+
+3. **act on the report.** a rule broken often may need rewriting, or saying why it matters. a rule never applied
+   costs its tokens in every session: move it to the project it's for, or remove it. `heeded rules` shows how each
+   rule is checked, and the ones no call or reply can show.
+
+4. **run it again** whenever you like: after more sessions, or after editing an instruction file. every run reads the
+   transcripts again, for free, and asks only when something new costs tokens. what was read or judged is cached and
+   never paid for twice; with nothing new, the report ends `up to date`.
+
 ```sh
 npx heeded           # the report, for the claude code sessions run in this folder
 npx heeded rules     # the rules found, and how each one is checked
@@ -58,7 +86,7 @@ npx heeded --all     # judge every case waiting, not one run's 150k tokens
 npx heeded --json    # everything, as json
 ```
 
-needs node 22 or later and claude code, signed in: heeded calls your own `claude` to read rules and to judge.
+to type `heeded` instead of `npx heeded`, install it: `npm install -g heeded`.
 
 ## how it works
 
@@ -81,20 +109,10 @@ needs node 22 or later and claude code, signed in: heeded calls your own `claude
 5. **report.** each rule under its file: kept, broken with the evidence, never applied; by context depth and after
    compaction.
 
-steps 2 and 4 cost tokens. heeded shows the estimate and asks once, before spending anything:
-
-```text
-11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~175k tokens
-go ahead? [y/N]
-```
-
-a run judges within 150k tokens and nothing is paid for twice, so coverage grows run after run. `heeded --all` goes to
-the end instead: its question shows what waits now and the most it can reach, then it judges round after round until
-nothing waits. off a terminal (ci, a script) it never spends.
-
-run it again whenever you like: every run reads the transcripts again, for free, and asks only when something new
-costs tokens (sessions since, a section edited). what was read or judged is cached and never paid for twice; with
-nothing new, the report ends `up to date`.
+steps 2 and 4 cost tokens: heeded asks once, before spending anything. a run judges within 150k tokens and nothing is
+paid for twice, so coverage grows run after run. `heeded --all` goes to the end instead: its question shows what waits
+now and the most it can reach, then it judges round after round until nothing waits. off a terminal (ci, a script) it
+never spends.
 
 `heeded rules` shows what each rule became:
 
