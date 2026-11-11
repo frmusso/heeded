@@ -44,20 +44,35 @@ export async function pool<T>(items: T[], work: (item: T, i: number, stop: () =>
   await Promise.all(Array.from({ length: Math.min(CALLS, items.length) }, lane));
 }
 
-/** Runs claude in an empty folder of its own, removed after, so no project instruction file is loaded with it; null
- * when there is no claude to run. */
-async function claude(args: string[], prompt: string, env: NodeJS.ProcessEnv):
-  Promise<{ code: number | null; stdout: string; stderr: string } | null> {
+/** How long a call may take: the slowest measured take about 2 minutes, and one that hangs would hang heeded for
+ * good. */
+const LIMIT = 5 * 60_000;
+
+/** Runs claude in an empty folder of its own, removed after, so no project instruction file is loaded with it; killed
+ * past `limit` milliseconds (`late`). Null when there is no claude to run. */
+async function claude(args: string[], prompt: string, env: NodeJS.ProcessEnv, limit: number):
+  Promise<{ code: number | null; stdout: string; stderr: string; late: boolean } | null> {
   const cwd = mkdtempSync(join(tmpdir(), 'heeded-'));
   try {
     return await new Promise((resolve) => {
       const child = spawn('claude', args, { cwd, env });
       let stdout = '';
       let stderr = '';
+      let late = false;
+      const timer = setTimeout(() => {
+        late = true;
+        child.kill('SIGKILL');
+      }, limit);
       child.stdout.on('data', (d) => (stdout += d));
       child.stderr.on('data', (d) => (stderr += d));
-      child.on('error', () => resolve(null));
-      child.on('close', (code) => resolve({ code, stdout, stderr }));
+      child.on('error', () => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr, late });
+      });
       child.stdin.on('error', () => {}); // claude may stop reading, or never start
       child.stdin.end(prompt);
     });
@@ -71,15 +86,17 @@ const firstLine = (text: string) => text.split('\n').find((l) => l.trim())?.trim
 
 /**
  * One `claude -p` call, isolated: no tools, no session saved, no settings, hooks, MCP servers or slash commands of the
- * user's. The prompt goes on stdin; the answer is its structured output, to be checked by the caller. `fatal` when there
- * is no claude to run, so no other call is tried.
+ * user's. The prompt goes on stdin; the answer is its structured output, to be checked by the caller. `fatal` when
+ * there is no claude to run, so no other call is tried. A call past `limit` milliseconds (5 minutes) is stopped.
  */
-export async function ask(model: string, schema: string, prompt: string, env: NodeJS.ProcessEnv):
+export async function ask(model: string, schema: string, prompt: string, env: NodeJS.ProcessEnv, limit = LIMIT):
   Promise<{ tokens: number; output?: unknown; error?: string; fatal?: boolean }> {
   const run = await claude(['-p', '--model', model, '--output-format', 'json', '--json-schema', schema,
     '--no-session-persistence', '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '',
-    '--settings', '{"disableAllHooks":true}'], prompt, env);
+    '--settings', '{"disableAllHooks":true}'], prompt, env, limit);
   if (!run) return { tokens: 0, error: 'claude not found. install claude code, or run heeded where claude runs.', fatal: true };
+  // Its batch waits for the next run; the others go on.
+  if (run.late) return { tokens: 0, error: `claude took more than ${limit / 60_000} minutes: stopped` };
   if (run.code !== 0) return { tokens: 0, error: `claude exited with code ${run.code}: ${firstLine(run.stderr) || firstLine(run.stdout)}` };
   let out;
   try {
