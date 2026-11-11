@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { RuleData } from '../src/check.ts';
-import { json, type Report, rules, text } from '../src/report.ts';
+import { approx, json, type Report, rules, text } from '../src/report.ts';
 
 const buckets = (counts: [number, number][]) => counts.map(([applied, broken], i) =>
   ({ from: [0, 100_000, 200_000, 400_000][i], to: [100_000, 200_000, 400_000, null][i], applied, broken }));
 
 const empty: Report = {
   folder: '/home/someone/repos/app', configDir: '/home/someone/.claude', from: null, to: null, sessions: 0, subagents: 0,
-  unrecognized: [], notRead: 0, toJudge: 0, atMost: 0, files: [], rules: [], byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]),
+  unrecognized: [], notRead: 0, toJudge: 0, toJudgeTokens: 0, atMost: 0, files: [], rules: [], byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]),
 };
 
 test('the json document: heeded 2 first, then the report, two-space indented', () => {
@@ -28,7 +28,7 @@ test('the json document: heeded 2 first, then the report, two-space indented', (
   assert.ok(doc.startsWith('{\n  "heeded": 2,\n  "folder": "/home/someone/repos/app",\n  "configDir": '), doc);
   assert.ok(doc.endsWith('\n}\n'));
   assert.deepEqual(Object.keys(JSON.parse(doc)), ['heeded', 'folder', 'configDir', 'from', 'to', 'sessions', 'subagents',
-    'unrecognized', 'notRead', 'toJudge', 'atMost', 'files', 'rules', 'byDepth']);
+    'unrecognized', 'notRead', 'toJudge', 'toJudgeTokens', 'atMost', 'files', 'rules', 'byDepth']);
   assert.deepEqual(JSON.parse(doc), { heeded: 2, ...report });
 });
 
@@ -58,9 +58,12 @@ const sketch: Report = {
     r('never kill billing', 'never-applied', 0, 0, { tokens: 40 }),
     r('failing test first', 'judgment', 20, 4, { judged: 26, evidence: [
       { ...seen('2026-11-07T12:00:00Z', '1a2b3c4d', 'call Edit: src/x.ts'), quote: 'call Edit: src/x.ts' }] }),
-    r('ask before spending', 'judgment', 0, 0),
+    r('ask before spending', 'judgment', 0, 0, { toJudge: 3 }),
+    r('clickup writes', 'judgment', 0, 0, { judged: 8, tokens: 30 }),
+    r('plan before coding', 'judgment', 0, 0, { reason: 'no case to judge it on' }),
   ],
   toJudge: 9,
+  toJudgeTokens: 31_000,
   atMost: 9,
   byDepth: buckets([[2310, 46], [900, 27], [300, 27], [100, 16]]),
 };
@@ -68,26 +71,27 @@ const options = { columns: 80, color: false, now: new Date('2026-11-10T15:00:00Z
 
 const at80 = `
   ~/repos/billing · 76 sessions, 412 subagents · oct 11 – nov 10
-  3 files · 7 rules · 5 checked · 2 need a judge
+  3 files · 9 rules · 5 checked · 4 need a judge
 
-  ✗ never git add -A         kept 95% of 214        broken 9×    last 2 days ago
+  ✗ never git add -A     kept 95% of 214            broken 9×    last 2 days ago
       nov 8   19df6c20  git add -A && git commit -m "fix: …"
       nov 2   8c0e8fab  git add -A
       oct 29  4f1c22d0  git add -A
-  ✗ always talk to me in i…  kept 96% of 3,812      broken 152×  last today
+  ✗ always talk to me …  kept 96% of 3,812          broken 152×  last today
       after compaction kept 69% of 410
       nov 10  e7128125  en: "Sure — here's the plan for the …"
-  ✓ never force-push         kept 100% of 61        2 to confirm
-  ? never push to main       4 to confirm
-  ○ never kill billing       never applied          ~40 tokens every session
-  · failing test first       kept 80% of 20 judged  broken 4×    last 3 days ago
+  ✓ never force-push     kept 100% of 61            2 to confirm
+  ? never push to main   4 to confirm
+  ○ never kill billing   never applied              ~40 tokens every session
+  ○ clickup writes       never applied in 8 judged  ~30 tokens every session
+  · failing test first   kept 80% of 20 judged      broken 4×    last 3 days ago
       nov 7   1a2b3c4d  call Edit: src/x.ts
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                              98%        97%        91%     84%
 
-  1 rule not judged yet: heeded rules
-  9 cases waiting for the judge
+  1 rule no call or reply shows: heeded rules
+  9 cases waiting for the judge, ~31k tokens: run heeded again
 `;
 
 test('the report at 80 columns: the names are cut to fit', () => {
@@ -96,17 +100,18 @@ test('the report at 80 columns: the names are cut to fit', () => {
 
 test('the report at 120 columns: names whole', () => {
   const rows = `
-  ✗ never git add -A              kept 95% of 214        broken 9×    last 2 days ago
+  ✗ never git add -A              kept 95% of 214            broken 9×    last 2 days ago
       nov 8   19df6c20  git add -A && git commit -m "fix: …"
       nov 2   8c0e8fab  git add -A
       oct 29  4f1c22d0  git add -A
-  ✗ always talk to me in italian  kept 96% of 3,812      broken 152×  last today
+  ✗ always talk to me in italian  kept 96% of 3,812          broken 152×  last today
       after compaction kept 69% of 410
       nov 10  e7128125  en: "Sure — here's the plan for the …"
-  ✓ never force-push              kept 100% of 61        2 to confirm
+  ✓ never force-push              kept 100% of 61            2 to confirm
   ? never push to main            4 to confirm
-  ○ never kill billing            never applied          ~40 tokens every session
-  · failing test first            kept 80% of 20 judged  broken 4×    last 3 days ago
+  ○ never kill billing            never applied              ~40 tokens every session
+  ○ clickup writes                never applied in 8 judged  ~30 tokens every session
+  · failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
       nov 7   1a2b3c4d  call Edit: src/x.ts
 `;
   const at120 = at80.replace(/\n {2}✗[\s\S]*src\/x\.ts\n/, rows);
@@ -115,10 +120,28 @@ test('the report at 120 columns: names whole', () => {
 });
 
 test('in colour: the marks, and the evidence dimmed', () => {
-  const coloured = at80.replace(/✗/g, '\x1b[31m✗\x1b[39m').replace('✓', '\x1b[32m✓\x1b[39m').replace('○', '\x1b[2m○\x1b[22m')
+  const coloured = at80.replace(/✗/g, '\x1b[31m✗\x1b[39m').replace('✓', '\x1b[32m✓\x1b[39m').replace(/○/g, '\x1b[2m○\x1b[22m')
     .replace('  ? ', '  \x1b[2m?\x1b[22m ').replace('  · failing', '  \x1b[2m·\x1b[22m failing')
     .replace(/^( {6}(?:nov|oct) .*)$/gm, '\x1b[2m$1\x1b[22m');
   assert.equal(text(sketch, { ...options, color: true }), coloured);
+});
+
+test('a judgment rule that never applied is listed with the never-applied rules; one still waiting or with no case is not', () => {
+  const out = text(sketch, { ...options, columns: 120 });
+  assert.match(out, /\n {2}○ never kill billing +never applied +~40 tokens every session\n {2}○ clickup writes +never applied in 8 judged +~30 tokens every session\n {2}· failing test first /);
+  assert.doesNotMatch(out, /ask before spending|plan before coding/);
+});
+
+test('the end: the rules no case shows and those set aside, then the cases waiting, their tokens and what to do', () => {
+  const end = (more: Partial<Report>) => text({ ...sketch, ...more }, options).split('\n\n').at(-1);
+  assert.equal(end({}), '  1 rule no call or reply shows: heeded rules\n  9 cases waiting for the judge, ~31k tokens: run heeded again\n');
+  assert.equal(end({ toJudge: 837, toJudgeTokens: 2_702_000, rules: [...sketch.rules, r('never rm', 'demoted', 0, 0)] }),
+    '  1 rule no call or reply shows, 1 set aside: heeded rules\n'
+    + '  837 cases waiting for the judge, ~2.7M tokens: heeded judges ~150k a run, heeded --all all of them\n');
+});
+
+test('tokens as heeded says them', () => {
+  assert.deepEqual([106_000, 999_499, 999_500, 1_140_000, 2_702_000].map(approx), ['~106k', '~999k', '~1M', '~1.1M', '~2.7M']);
 });
 
 test('no transcripts: one line naming the folder and the config dir', () => {
@@ -132,20 +155,20 @@ test('sessions without instruction files: one line', () => {
 
 test('transcripts not recognized, and sections not read yet: one line each', () => {
   const out = text({ ...sketch, unrecognized: ['a.jsonl', 'b.jsonl'], notRead: 14 }, options);
-  assert.ok(out.endsWith('  1 rule not judged yet: heeded rules\n'
+  assert.ok(out.endsWith('  1 rule no call or reply shows: heeded rules\n'
     + '  14 sections not read yet: the rules in them aren\'t checked\n'
-    + '  9 cases waiting for the judge\n'
+    + '  9 cases waiting for the judge, ~31k tokens: run heeded again\n'
     + '  2 transcripts unrecognized: claude code may have changed its format\n'), out);
 });
 
 test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of each, demoted rules', () => {
   const out = text({ ...sketch, sessions: 1, subagents: 1, files: ['a'], toJudge: 0,
     rules: [r('never sudo', 'broken', 1000, 999, { evidence: [seen('2026-11-09T12:00:00Z', 'aaaaaaaa', 'sudo ls')] }),
-      r('failing test first', 'judgment', 0, 0), r('never rm', 'demoted', 0, 0)],
+      r('failing test first', 'judgment', 0, 0, { reason: 'no case to judge it on' }), r('never rm', 'demoted', 0, 0)],
     byDepth: buckets([[1000, 999], [19, 0], [0, 0], [0, 0]]) }, options);
   assert.equal(out, `
   ~/repos/billing · 1 session, 1 subagent · oct 11 – nov 10
-  1 file · 3 rules · 1 checked · 1 need a judge · 1 demoted
+  1 file · 3 rules · 1 checked · 1 need a judge · 1 set aside
 
   ✗ never sudo  kept 1% of 1,000  broken 999×  last yesterday
       nov 9   aaaaaaaa  sudo ls
@@ -153,7 +176,7 @@ test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                               1%          –          –       –
 
-  1 rule not judged yet, 1 demoted: heeded rules
+  1 rule no call or reply shows, 1 set aside: heeded rules
 `);
 });
 

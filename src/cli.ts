@@ -46,7 +46,12 @@ async function scan(configDir: string, folder: string, cacheDir: string):
   const count = counter(rulesOf(cacheDir), verdicts(cacheDir));
   const { unrecognized } = await read(configDir, folder, count.on);
   for (const v of count.readVersions()) remember(cacheDir, v.identity, v.section.hash, v.at);
-  return { report: { folder, configDir, unrecognized, ...count.result() }, pending: count.pending(), waiting: count.waiting() };
+  const data = count.result();
+  const waiting = count.waiting();
+  // A tool rule lists 40 of its candidates: the others cost what those listed cost on average.
+  const listed = [...waiting.tool, ...waiting.judgment].flat();
+  const toJudgeTokens = listed.length ? Math.round((judgingEstimate(listed).tokens / listed.length) * data.toJudge) : 0;
+  return { report: { folder, configDir, unrecognized, ...data, toJudgeTokens }, pending: count.pending(), waiting };
 }
 
 const thousands = (n: number) => n.toLocaleString('en-US');

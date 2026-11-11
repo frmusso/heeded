@@ -1,13 +1,15 @@
 // The report: the terminal's text and the json document, from the same data.
 import type { Data, RuleData } from './check.ts';
+import { BUDGET } from './judge.ts';
 
-/** The counts, and where they were read from. */
-export interface Report extends Data { folder: string; configDir: string; unrecognized: string[] }
+/** The counts, where they were read from, and what judging every case waiting would cost. */
+export interface Report extends Data { folder: string; configDir: string; unrecognized: string[]; toJudgeTokens: number }
 
 export function json(r: Report): string {
-  const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, atMost, files, rules, byDepth } = r;
-  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, atMost,
-    files, rules, byDepth }, null, 2)}\n`;
+  const { folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge, toJudgeTokens, atMost, files, rules,
+    byDepth } = r;
+  return `${JSON.stringify({ heeded: 2, folder, configDir, from, to, sessions, subagents, unrecognized, notRead, toJudge,
+    toJudgeTokens, atMost, files, rules, byDepth }, null, 2)}\n`;
 }
 
 interface TextOptions { columns: number; color: boolean; now: Date; home: string }
@@ -20,6 +22,10 @@ const cut = (s: string, width: number) => (s.length > width ? `${s.slice(0, widt
 const tilde = (path: string, home: string) => (path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path);
 const paint = (color: boolean, code: number, off: number, s: string) => (color ? `\x1b[${code}m${s}\x1b[${off}m` : s);
 const notRead = (n: number) => `  ${plural(n, 'section')} not read yet: the rules in them aren't checked`;
+
+/** Tokens as heeded says them: ~106k, ~1.1M. */
+export const approx = (tokens: number) =>
+  (tokens >= 999_500 ? `~${Number((tokens / 1_000_000).toFixed(1))}M` : `~${Math.round(tokens / 1000)}k`);
 
 /** Floored, so never 100% with a violation; and never 0% with a case kept. */
 function kept(applied: number, broken: number): string {
@@ -61,13 +67,17 @@ export function text(r: Report, o: TextOptions): string {
   const judgment = r.rules.filter((x) => x.status === 'judgment');
   const demoted = r.rules.filter((x) => x.status === 'demoted').length;
   const counts = `  ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')} · ${thousands(checked.length)} checked`
-    + ` · ${thousands(judgment.length)} need a judge${demoted ? ` · ${thousands(demoted)} demoted` : ''}`;
+    + ` · ${thousands(judgment.length)} need a judge${demoted ? ` · ${thousands(demoted)} set aside` : ''}`;
 
-  // The rules' cells, the name column narrowed until the widest row fits: the checked rules, then the judgment rules
-  // judged on a sample, whose share is of their cases judged.
-  const shown = [...checked, ...judgment.filter((x) => x.applied)];
-  const rows = shown.map((x) => [x.name, ...(x.status === 'never-applied'
-    ? ['never applied', `~${thousands(x.tokens)} tokens every session`]
+  // The rules' cells, the name column narrowed until the widest row fits: the checked rules; the judgment rules that
+  // never applied (their sample ended with every case none, or they had no case) with the others never applied; then
+  // the judgment rules judged on a sample, whose share is of their cases judged. A judgment rule whose cases still wait,
+  // or that no call or reply can show, is counted at the end.
+  const unapplied = judgment.filter((x) => !x.reason && !x.applied && !x.toJudge);
+  const never = (x: RuleData) => x.status === 'never-applied' || unapplied.includes(x);
+  const shown = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)];
+  const rows = shown.map((x) => [x.name, ...(never(x)
+    ? [`never applied${x.judged ? ` in ${thousands(x.judged)} judged` : ''}`, `~${thousands(x.tokens)} tokens every session`]
     : x.status === 'to-confirm' ? []
     : [`kept ${kept(x.applied, x.broken)} of ${thousands(x.applied)}${x.status === 'judgment' ? ' judged' : ''}`,
       ...(x.broken ? [`broken ${thousands(x.broken)}×`, `last ${ago(x.evidence[0].at, o.now)}`] : [])]),
@@ -76,7 +86,7 @@ export function text(r: Report, o: TextOptions): string {
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 4)) > o.columns) width--;
   const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', 'never-applied': '○', judgment: '·' } as Record<string, string>;
-  const lines = laid(width).map((l, i) => cut(`  ${mark[shown[i].status]} ${l}`, o.columns));
+  const lines = laid(width).map((l, i) => cut(`  ${never(shown[i]) ? '○' : mark[shown[i].status]} ${l}`, o.columns));
   const rules: string[] = [];
   shown.forEach((x, i) => {
     rules.push(lines[i]);
@@ -96,13 +106,14 @@ export function text(r: Report, o: TextOptions): string {
     `  ${' '.repeat(21)}${r.byDepth.map((b, i) => `   ${(b.applied >= 20 ? kept(b.applied, b.broken) : '–').padStart(labels[i].length)}`).join('')}`,
   ] : [];
 
-  const unjudged = judgment.filter((x) => !x.applied).length;
-  const notChecked = [unjudged && `${plural(unjudged, 'rule')} not judged yet`, demoted && `${thousands(demoted)} demoted`]
+  const unseen = judgment.filter((x) => x.reason).length;
+  const aside = [unseen && `${plural(unseen, 'rule')} no call or reply shows`, demoted && `${thousands(demoted)} set aside`]
     .filter(Boolean).join(', ');
+  const todo = r.toJudgeTokens > BUDGET ? `heeded judges ${approx(BUDGET)} a run, heeded --all all of them` : 'run heeded again';
   const end = [
-    ...(notChecked ? [`  ${notChecked}: heeded rules`] : []),
+    ...(aside ? [`  ${aside}: heeded rules`] : []),
     ...(r.notRead ? [notRead(r.notRead)] : []),
-    ...(r.toJudge ? [`  ${plural(r.toJudge, 'case')} waiting for the judge`] : []),
+    ...(r.toJudge ? [`  ${plural(r.toJudge, 'case')} waiting for the judge, ${approx(r.toJudgeTokens)} tokens: ${todo}`] : []),
     ...unrecognized,
   ];
   return out([[header, counts], rules, depth, end]);
