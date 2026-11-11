@@ -25,6 +25,7 @@ usage
   heeded rules      the rules found, and how each one is checked
 
 options
+  --all             judge every case waiting, not one run's 150k tokens
   --json            the report as json
   --help, --version
 
@@ -75,7 +76,7 @@ function setup({ session = true, claude = true, cached = false, replies = [answe
   const log = join(s.root, 'claude.log');
   const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').length : 0);
   const heeded = async (args: string[],
-    { terminal = false, reply = 'y' as string | Error, columns = undefined as number | undefined, env = {} } = {}) => {
+    { terminal = false, reply = 'y' as string | Error | string[], columns = undefined as number | undefined, env = {} } = {}) => {
     let out = '';
     let err = '';
     const shown: string[] = [];
@@ -87,7 +88,8 @@ function setup({ session = true, claude = true, cached = false, replies = [answe
       ask: async (q) => {
         asked.push(q);
         if (reply instanceof Error) throw reply;
-        return reply;
+        // One answer for every question, or one each, in turn.
+        return Array.isArray(reply) ? reply[asked.length - 1] ?? '' : reply;
       },
     });
     return { code, out, err, shown, asked };
@@ -288,4 +290,68 @@ test('a version read, seen again later, moves what the cache remembers forward',
   await heeded([]);
   const older = rulesOf(s.cacheDir)({ path: join(repo, 'CLAUDE.md'), type: 'Project', content: `${content} at all` })!;
   assert.match(older.versions[0].readAt!, /^2026-/);
+});
+
+// heeded --all: every case judged, round after round.
+const commitRule = { quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment', trigger: 'committing',
+  check: { field: 'command', when: { tool: '^Bash$', value: '\\bgit\\s+commit\\b' } },
+  keeping: [{ tool: 'Bash', value: 'git commit -m x' }] };
+const asked = '- commit only when asked';
+/** A session with `n` commits under the rule, read already. */
+function commits(n: number, replies: string[]) {
+  const t = setup({ session: false, replies });
+  writeSession(t.s.configDir, t.repo, 'a', [instructions([{ path: join(t.repo, 'CLAUDE.md'), type: 'Project', content: asked }]),
+    ...Array.from({ length: n }, (_, i) => assistant({ id: `m${i}`, tool: { id: `t${i}`, name: 'Bash', input: { command: `git commit -m c${i}` } } }))]);
+  save(t.s.cacheDir, sections(asked)[0].hash, [commitRule]);
+  return t;
+}
+const kept = JSON.stringify({ is_error: false, usage, structured_output: {
+  cases: Array.from({ length: 8 }, (_, i) => ({ id: String(i + 1), verdict: 'kept', quote: 'git commit' })) } });
+
+test('--all: the cases now and the most they can grow to; judged round after round until none waits', async () => {
+  const { heeded, calls } = commits(12, [kept]);
+  const { code, err, asked: questions, out } = await heeded(['--all'], { terminal: true });
+  assert.equal(code, 0);
+  assert.deepEqual(questions, ['go ahead? [y/N] ']);
+  // 8 cases first; they apply, so the other 4 are taken in a second round.
+  assert.match(err, /^8 cases to judge, more if their rules apply · claude haiku · ~\d+k tokens, at most ~\d+k\n/);
+  assert.match(err, /\njudged 12 cases · 8,000 tokens\n$/);
+  assert.equal(calls(), 2);
+  assert.match(out, /· commit only when asked +kept 100% of 12 judged/);
+  assert.doesNotMatch(out, /waiting for the judge/);
+});
+
+test('--all: a round that judges nothing ends the run', async () => {
+  const { heeded, calls } = commits(12, [JSON.stringify({ is_error: true, result: 'nope', usage })]);
+  const { code, err } = await heeded(['--all'], { terminal: true });
+  assert.equal(code, 1);
+  assert.equal(calls(), 1);
+  assert.match(err, /\nheeded: claude: nope\n$/);
+});
+
+test('--all with a section to read: the reading first, then the judging, each asked; no to the second reads only', async () => {
+  for (const [replies, spent] of [[['y', 'n'], 1], [['y', 'y'], 2]] as const) {
+    const { heeded, calls } = setup({ replies: [answer, confirmed] });
+    const { err, asked: questions } = await heeded(['--all'], { terminal: true, reply: [...replies] });
+    assert.deepEqual(questions, ['go ahead? [y/N] ', 'go ahead? [y/N] ']);
+    assert.match(err, /^1 rule section to read first · claude sonnet · ~4k tokens\nread 1 section · 4,000 tokens\n1 case to judge · claude haiku · ~3k tokens\n/);
+    assert.equal(calls(), spent);
+  }
+});
+
+test('without --all, more waiting than a run takes: the question says what all of them would cost', async () => {
+  const { s, repo, heeded } = setup({ session: false, cached: true, replies: [confirmed] });
+  writeSession(s.configDir, repo, 'a', [instructions([{ path: join(repo, 'CLAUDE.md'), type: 'Project', content }]),
+    ...Array.from({ length: 50 }, (_, i) => assistant({ id: `m${i}`, tool: { id: `t${i}`, name: 'Bash', input: { command: `git add -A f${i}` } } }))]);
+  const { err } = await heeded([], { terminal: true, reply: 'n' });
+  // A tool rule lists 40 of its candidates at a time.
+  assert.match(err, /^40 of 50 cases to judge · claude haiku · ~\d+k tokens · all of them ~\d+k: heeded --all\n$/);
+});
+
+test('--all off a terminal: nothing asked, nothing spent', async () => {
+  const { heeded, calls } = commits(12, [kept]);
+  const { asked: questions, out } = await heeded(['--all']);
+  assert.deepEqual(questions, []);
+  assert.equal(calls(), 0);
+  assert.match(out, /8 cases waiting for the judge/);
 });

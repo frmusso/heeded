@@ -310,7 +310,8 @@ export function select(tool: Case[][], judgment: Case[][], budget: number): Case
     for (let i = 0; lists.some((l) => i < l.length); i++) {
       for (const l of lists) {
         if (i >= l.length) continue;
-        if (estimate([...picked, l[i]]).tokens > budget) return picked;
+        // Without a budget, no estimate: built over every case picked so far, it would cost the square of their number.
+        if (budget < Infinity && estimate([...picked, l[i]]).tokens > budget) return picked;
         picked.push(l[i]);
       }
     }
