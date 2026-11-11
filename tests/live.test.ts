@@ -45,6 +45,9 @@ test('the extraction gives cases to rules about what is written and about commit
     assert.equal(rules.length, 2, JSON.stringify(raw));
     // Each one checked, or judged on cases: none left with no case.
     for (const r of rules) assert.ok(r && !r.demoted && !r.noCases && r.check, JSON.stringify(raw));
+    // The language of comments no pattern can decide: a judgment rule, judged on the edits that write them.
+    const comments = rules.find((r) => r?.quote.includes('comment'));
+    assert.ok(comments?.kind === 'judgment' && /Edit|Write/.test(comments.check?.when?.tool ?? ''), JSON.stringify(raw));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

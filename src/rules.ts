@@ -7,7 +7,6 @@ import type { InstructionFile } from './claude-code.ts';
 import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
 
-/** Part of every section's hash: a new prompt or model reads every section again. */
 /** The extraction prompt's version: part of every cache key, so a new prompt reads every section again. */
 export const PROMPT_VERSION = 4;
 export const MODEL = 'sonnet';
@@ -162,8 +161,6 @@ export function save(cacheDir: string, hash: string, rules: unknown[]) {
 
 /** A section waiting to be read: when its file was last in effect during a call or a reply (`''` when never). */
 export interface Pending { section: Section; identity: string; at: string }
-/** One version of a section: whether it was read itself, and when the version of it remembered as read last was in
- * effect (null: none was read). */
 /** A section as a file holds it: read under this prompt or not, when its version read last was in effect, and whether
  * rules read before (another version of it, or the previous prompt) stand for it until it is read. */
 export interface Version { section: Section; identity: string; read: boolean; readAt: string | null; before: boolean }
