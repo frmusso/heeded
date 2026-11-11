@@ -235,11 +235,14 @@ interface Tally {
 
 /** The cases a rule keeps waiting, at most: a run judges far fewer. */
 const WAITING = 40;
-/** A judgment rule's sample: judged until 20 of its cases are decided, or 40 judged in all, so a rule whose `when` is
- * too broad stops costing. */
+/** A judgment rule's sample: its first 8 cases, and if none of them applies, no more: a rule that doesn't concern the
+ * folder (a global rule about a tool it never uses) stops costing. Once one applies, judged until 20 of its cases are
+ * decided, or 40 judged in all. */
+const PROBE = 8;
 const DECIDED = 20;
 const JUDGED = 40;
-const allowed = (t: Tally) => (t.rule.kind === 'judgment' ? Math.max(0, Math.min(JUDGED - t.judged, DECIDED - t.all.applied)) : Infinity);
+const allowed = (t: Tally) => (t.rule.kind !== 'judgment' ? Infinity
+  : Math.max(0, t.all.applied ? Math.min(JUDGED - t.judged, DECIDED - t.all.applied) : PROBE - t.judged));
 
 /** A rule's cases waiting: latest first (ties by key), an excerpt once (two events can read alike), at most 40. */
 function trim(list: Excerpt[]) {

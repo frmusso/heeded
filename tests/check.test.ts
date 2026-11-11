@@ -490,7 +490,7 @@ test("a judgment rule's share is over its decided cases: none leaves them", () =
     [{ ...at(3), session: 's1', agent: null, text: `${`call Bash: ${long}`.slice(0, 200)}…`, quote: 'git commit -m' }]);
 });
 
-test('judging a rule stops at 20 decided or 40 judged', () => {
+test('a judgment rule is judged on 8 cases first: none applies, it stops there; one does, until 20 decided or 40 judged', () => {
   const commits = (n: number) => [start(), files({ '/r/CLAUDE.md': 'A' }),
     ...Array.from({ length: n }, (_, i) => bash(`git commit -m c${i}`, { at: `2026-11-02T10:${String(i).padStart(2, '0')}:00Z` }))];
   const waiting = (n: number, verdicts: Verdict[]) => {
@@ -498,9 +498,18 @@ test('judging a rule stops at 20 decided or 40 judged', () => {
     return [c.waiting().judgment.flat().length, c.result().toJudge];
   };
   const times = (n: number, verdict: Verdict['verdict']): Verdict[] => Array.from({ length: n }, () => ({ verdict }));
+  assert.deepEqual(waiting(30, []), [8, 8]);
+  assert.deepEqual(waiting(30, times(5, 'none')), [3, 3]);
+  assert.deepEqual(waiting(30, times(8, 'none')), [0, 0]);
+  assert.deepEqual(waiting(42, times(39, 'none')), [0, 0]);
+  assert.deepEqual(waiting(30, [{ verdict: 'kept' }, ...times(7, 'none')]), [19, 19]);
   assert.deepEqual(waiting(23, times(18, 'kept')), [2, 2]);
-  assert.deepEqual(waiting(42, times(39, 'none')), [1, 1]);
   assert.deepEqual(waiting(22, times(20, 'kept')), [0, 0]);
+  // A tool rule's candidates have no sample.
+  const adds = feed([start(), files({ '/r/CLAUDE.md': 'A' }),
+    ...Array.from({ length: 12 }, (_, i) => bash(`git add -A d${i}`, { at: `2026-11-02T10:${String(i).padStart(2, '0')}:00Z` }))],
+  { A: [addAll] }, {}, unjudged);
+  assert.equal(adds.waiting().tool.flat().length, 12);
 });
 
 test('a judgment rule without cases is never a case', () => {
