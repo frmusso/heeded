@@ -10,9 +10,10 @@ const section = (text: string, hash = text.slice(0, 8), path: string[] = []): Se
 /** Sections as the counter hands them over: each its own section, never in effect during a call. */
 const pending = (...list: Section[]) => list.map((s) => ({ section: s, identity: s.hash, at: '' }));
 
-test('the estimate: one call per 30,000 characters of sections, ~6.5k tokens each, plus the text read and the answer', () => {
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 78_625 });
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 62_750 });
+test('the estimate: one call per 10,000 characters of sections, ~6.5k tokens each, plus the text read and the answer', () => {
+  // A long answer leaves out checks: a call holds ~10,000 characters of sections, a longer section alone.
+  assert.deepEqual(estimate([section('x'.repeat(4000)), section('y'.repeat(6000))]), { calls: 1, tokens: 25_250 });
+  assert.deepEqual(estimate([section('x'.repeat(4000)), section('y'.repeat(6001))]), { calls: 2, tokens: 31_758 });
   assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 90_875 });
 });
 
@@ -61,7 +62,7 @@ test('each batch is cached as it is read, by section id, unknown ids ignored; to
     { match: 'gggg', stdout: answer([{ id: '1', rules: [rule] }, { id: '9', rules: [rule] }], [3800, 100, 0, 200]) },
     { match: 'hhhh', stdout: answer([{ id: '2', rules: [] }, { id: '1', rules: [] }], [3800, 0, 50, 300]) },
   ]);
-  const result = await extract(pending(section('g'.repeat(20_000), 'ha'), section('h'.repeat(25_000), 'hb'), section('c', 'hc')), env,
+  const result = await extract(pending(section('g'.repeat(6000), 'ha'), section('h'.repeat(8000), 'hb'), section('c', 'hc')), env,
     s.cacheDir);
   assert.equal(calls().length, 2);
   assert.deepEqual(result, { read: 3, tokens: 8250, errors: [] });

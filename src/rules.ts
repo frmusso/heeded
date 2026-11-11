@@ -289,8 +289,10 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
   };
 }
 
-/** Sections go to claude in calls of at most 30,000 characters of their text. */
-const BATCH = 30_000;
+/** Sections go to claude in calls of at most 10,000 characters of their text: in a longer answer the model leaves
+ * most rules without their check (on a real file, 1 rule in 16 checked in a call of ~25,000 characters, 12 in 15 with
+ * the section alone). */
+const BATCH = 10_000;
 
 /** What reading `sections` would cost: each call carries ~6.5k tokens of prompt, schema and claude's own; the text is
  * read once and answered with about six and a half times as much (a JSON object per rule, with its check and
