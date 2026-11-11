@@ -84,7 +84,7 @@ needs node 22 or later and claude code, signed in: heeded calls your own `claude
 steps 2 and 4 cost tokens. heeded shows the estimate and asks once, before spending anything:
 
 ```text
-11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~163k tokens
+11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~175k tokens
 go ahead? [y/N]
 ```
 

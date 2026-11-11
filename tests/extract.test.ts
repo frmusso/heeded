@@ -10,10 +10,10 @@ const section = (text: string, hash = text.slice(0, 8), path: string[] = []): Se
 /** Sections as the counter hands them over: each its own section, never in effect during a call. */
 const pending = (...list: Section[]) => list.map((s) => ({ section: s, identity: s.hash, at: '' }));
 
-test('the estimate: one call per 30,000 characters of sections, ~4.4k tokens each, plus the text read and the answer', () => {
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 35_050 });
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 26_900 });
-  assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 38_150 });
+test('the estimate: one call per 30,000 characters of sections, ~5.6k tokens each, plus the text read and the answer', () => {
+  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 63_700 });
+  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 50_600 });
+  assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 73_100 });
 });
 
 /** What `claude -p --output-format json --json-schema` prints. */
@@ -176,7 +176,8 @@ test('the prompt gives cases to every rule a call or reply can show: what is wri
   const stdin = calls()[0].stdin.replace(/\s+/g, ' ');
   for (const words of ['however many they are', 'the Edit and Write calls on the files it is about', 'the judge reads what each one writes',
     'git commit commands with a message', 'the calls that run it', 'never a call that only keeps the rule',
-    'always with keeping', 'A check without them is not used',
+    'always with keeping', 'A check without them is not used', 'whether a tool can check it or not',
+    'the rule is listed all the same',
     'Leave the check out only when no call or reply can show the rule', 'the order of the work']) {
     assert.ok(stdin.includes(words), words);
   }

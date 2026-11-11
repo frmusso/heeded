@@ -155,7 +155,7 @@ test('sections to read and cases: one question with the ceiling, then read, judg
   const { s, heeded, calls } = setup({ replies: [answer, confirmed] });
   const { code, out, err, asked } = await heeded([], { terminal: true, reply: 'y' });
   assert.equal(code, 0);
-  assert.equal(err, '1 rule section to read, then cases to judge · claude sonnet and haiku · up to ~154k tokens\n'
+  assert.equal(err, '1 rule section to read, then cases to judge · claude sonnet and haiku · up to ~156k tokens\n'
     + 'read 1 section · 4,000 tokens\njudged 1 case · 4,000 tokens\n');
   assert.deepEqual(asked, ['go ahead? [y/N] ']);
   assert.equal(calls(), 2);
@@ -335,7 +335,7 @@ test('--all with a section to read: the reading first, then the judging, each as
     const { heeded, calls } = setup({ replies: [answer, confirmed] });
     const { err, asked: questions } = await heeded(['--all'], { terminal: true, reply: [...replies] });
     assert.deepEqual(questions, ['go ahead? [y/N] ', 'go ahead? [y/N] ']);
-    assert.match(err, /^1 rule section to read first · claude sonnet · ~4k tokens\nread 1 section · 4,000 tokens\n1 case to judge · claude haiku · ~3k tokens\n/);
+    assert.match(err, /^1 rule section to read first · claude sonnet · ~6k tokens\nread 1 section · 4,000 tokens\n1 case to judge · claude haiku · ~3k tokens\n/);
     assert.equal(calls(), spent);
   }
 });

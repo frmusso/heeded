@@ -239,12 +239,14 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
 /** Sections go to claude in calls of at most 30,000 characters of their text. */
 const BATCH = 30_000;
 
-/** What reading `sections` would cost: each call carries ~4.4k tokens of prompt and schema; the text is read once and
- * answered with about twice as much (a JSON object per rule). Fitted on real calls; the real count is shown after. */
+/** What reading `sections` would cost: each call carries ~5.6k tokens of prompt, schema and claude's own; the text is
+ * read once and answered with about five times as much (a JSON object per rule, with its check and examples). Fitted on
+ * real calls with prompt v4 (13 sections, 24.6k and 27.3k tokens; a short section, 5.6k–5.8k); the real count is shown
+ * after. */
 export function estimate(sections: Section[]): { calls: number; tokens: number } {
   const calls = batches(sections, (s) => s.text.length, BATCH).length;
   const chars = sections.reduce((n, s) => n + s.text.length, 0);
-  return { calls, tokens: 4400 * calls + 3 * Math.ceil(chars / 4) };
+  return { calls, tokens: 5600 * calls + 6 * Math.ceil(chars / 4) };
 }
 
 const PATTERNS = { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' }, data: { type: 'string' } } };
@@ -295,7 +297,8 @@ const SCHEMA = JSON.stringify({
 const PROMPT = String.raw`You read the instruction files a coding agent (Claude Code) is given, and list the rules in them, so that a tool
 can check later whether the agent followed each one. Below are sections of those files. Return every section by its id
 with the rules it states: an empty list when it states none. A rule tells the agent to do or not to do something;
-descriptions, explanations and context are not rules.
+descriptions, explanations and context are not rules. List every rule, whether a tool can check it or not: the user
+reads this list to know what their files ask.
 
 For each rule:
 - quote: the rule's own words, copied exactly from the section: never reworded, typos and formatting (backticks) kept.
@@ -343,8 +346,8 @@ read of a file the rule forbids editing). A check without them is not used.
   reads what each one writes.
 - A rule about commit messages has the git commit commands with a message ("data": "\S" in "when").
 - A rule about a command, a setting or a tool has the calls that run it.
-Leave the check out only when no call or reply can show the rule: how to plan, what to remember, the order of the
-work.
+Leave the check out only when no call or reply can show the rule (how to plan, what to remember, the order of the
+work): the rule is listed all the same.
 `;
 
 /**
