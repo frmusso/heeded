@@ -46,11 +46,11 @@ before it counts. a rule a plain check can't decide gets the calls or replies it
 
 a pattern written by a model finds candidates, not violations. every call a pattern says broke its rule, and every case
 of a rule no pattern can decide, goes to a judge: your own `claude` again, reading an excerpt of the session, the prompt
-that started the turn and what followed (a command as run, an edit with the start of what it writes), secrets redacted.
-only your words grant a permission: typed, picked from a question, or set for the session in a `<user-instructions>`
-block a launcher appends to the system prompt; an agent's never do. a run judges within 150k tokens, asked for with the
-rest. verdicts are cached, so a case is paid for once and coverage grows run after run; a judgment rule is judged until
-20 of its cases are decided.
+that started the turn and what followed (a command as run, an edit with the start of what it writes, never for a file of
+secrets like `.env`), secrets redacted. only your words grant a permission: typed, picked from a question, or set for
+the session in a `<user-instructions>` block a launcher appends to the system prompt; an agent's never do. a run judges
+within 150k tokens, asked for with the rest. verdicts are cached, so a case is paid for once and coverage grows run
+after run; a judgment rule is judged until 20 of its cases are decided.
 
 a shell command is read the way the shell reads it, one command at a time: what it runs is checked apart from what it
 carries (a file written through a heredoc, a commit message, the pattern of a search), so writing about `rm -rf` is not
