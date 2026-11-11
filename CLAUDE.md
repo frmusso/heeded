@@ -4,7 +4,7 @@ heeded measures whether coding agents follow their instruction files (`CLAUDE.md
 transcripts they leave on disk. this file is for anyone working on its code, and for their agents: [README.md](README.md)
 is for users. personal instructions go in `CLAUDE.local.md`, which git ignores.
 
-**status:** v2.1 implemented, not published yet.
+**status:** v2.2 implemented, not published yet.
 
 ## principles
 
@@ -64,11 +64,13 @@ instruction files (from the events) ──▶ rules.ts      judge.ts: select wit
 - `src/claude-code.ts`: the only module that knows claude code. finds the transcripts of the sessions run in a folder
   and streams them, one pass per file, into neutral events (`transcript`, `instructions`, `compaction`, `call`,
   `reply`, `prompt`: the user's words, answers to the agent's questions and the instructions set for the session
-  included, or a subagent's task). another agent is another adapter emitting the same events.
+  included, or a subagent's task; a call on the agent's own files, its memory, is marked `own`). another agent is
+  another adapter emitting the same events.
 - `src/rules.ts`: instruction files into sections; the extraction call (one per batch of new sections); local
   verification of what it returns (a judgment rule's `when`, or why it has no cases); the cache: one file per section
   hash, and per section the version read last, whose rules its other versions take.
-- `src/model.ts`: the user's own `claude -p`, isolated, with a schema: the call the extraction and the judge share.
+- `src/model.ts`: the user's own `claude -p`, isolated, with a schema: the call the extraction and the judge share, up to
+  3 at once.
 - `src/judge.ts`: a case's excerpt of its session, its key and cached verdict; the selection within a run's budget;
   the judge call and the local check of its answer.
 - `src/shell.ts`: a shell command line read as a shell reads it, into simple commands, each with what it does and what
