@@ -288,14 +288,14 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
 /** Sections go to claude in calls of at most 30,000 characters of their text. */
 const BATCH = 30_000;
 
-/** What reading `sections` would cost: each call carries ~5.6k tokens of prompt, schema and claude's own; the text is
- * read once and answered with about five times as much (a JSON object per rule, with its check and examples). Fitted on
- * real calls with prompt v4 (13 sections, 24.6k and 27.3k tokens; a short section, 5.6k–5.8k); the real count is shown
- * after. */
+/** What reading `sections` would cost: each call carries ~6.5k tokens of prompt, schema and claude's own; the text is
+ * read once and answered with about six and a half times as much (a JSON object per rule, with its check and
+ * examples). Fitted on real calls with prompt v5 (13 sections, 32.9k tokens; a short section, 7.5k); the real count is
+ * shown after. */
 export function estimate(sections: Section[]): { calls: number; tokens: number } {
   const calls = batches(sections, (s) => s.text.length, BATCH).length;
   const chars = sections.reduce((n, s) => n + s.text.length, 0);
-  return { calls, tokens: 5600 * calls + 6 * Math.ceil(chars / 4) };
+  return { calls, tokens: 6500 * calls + Math.ceil(7.5 * Math.ceil(chars / 4)) };
 }
 
 const PATTERNS = { type: 'object', properties: { tool: { type: 'string' }, value: { type: 'string' }, data: { type: 'string' } } };

@@ -10,10 +10,10 @@ const section = (text: string, hash = text.slice(0, 8), path: string[] = []): Se
 /** Sections as the counter hands them over: each its own section, never in effect during a call. */
 const pending = (...list: Section[]) => list.map((s) => ({ section: s, identity: s.hash, at: '' }));
 
-test('the estimate: one call per 30,000 characters of sections, ~5.6k tokens each, plus the text read and the answer', () => {
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 63_700 });
-  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 50_600 });
-  assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 73_100 });
+test('the estimate: one call per 30,000 characters of sections, ~6.5k tokens each, plus the text read and the answer', () => {
+  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(25_000))]), { calls: 2, tokens: 78_625 });
+  assert.deepEqual(estimate([section('x'.repeat(10_000)), section('y'.repeat(20_000))]), { calls: 1, tokens: 62_750 });
+  assert.deepEqual(estimate([section('x'.repeat(45_000))]), { calls: 1, tokens: 90_875 });
 });
 
 /** What `claude -p --output-format json --json-schema` prints. */
