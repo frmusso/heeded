@@ -356,6 +356,12 @@ test("a case is never split across calls: its excerpt and its rules count whole;
   assert.ok(estimate(together).tokens < estimate(apart).tokens * 0.6, JSON.stringify([estimate(together), estimate(apart)]));
 });
 
+test("a call's 40,000 characters count a rule once: it is listed once, however many of its cases the call holds", () => {
+  const wordy = { ...judged('never deploy on fridays'), context: 'x'.repeat(14_000) }; // not hex: it would read as a secret
+  const list = ['a', 'b', 'c'].map((c, i) => on(wordy, `you: x\ncall Bash: ${c.repeat(7000)}`, `k${i}`));
+  assert.equal(estimate(list).calls, 1);
+});
+
 test('a quote not in the excerpt, spacing aside, makes the verdict none', async () => {
   const list = [kase(commit, 'you: fix it\ncall Bash: git commit -m a'), kase(commit, 'you: deploy\ncall Bash: git commit -m b'),
     kase(commit, 'you: go\ncall Bash: git commit -m c'), kase(commit, 'you: stop\ncall Bash: git commit -m d'),

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Event } from './claude-code.ts';
-import { ask, batches, pool } from './model.ts';
+import { ask, pool } from './model.ts';
 import { redact } from './redact.ts';
 import { type Rule, write } from './rules.ts';
 
@@ -288,10 +288,23 @@ function prompts(cases: Case[], dir: string | undefined): Call[] {
     if (group) group.push(c);
     else byKey.set(keyOf(c), [c]);
   }
-  // An excerpt and its rules go whole into one call.
-  const size = (group: Case[]) => group.reduce((n, c) => n + c.rule.quote.length + (c.rule.context?.length ?? 0),
-    group[0].excerpt.length);
-  return batches([...byKey.values()], size, BATCH).map((batch) => {
+  // An excerpt and its rules go whole into one call; a rule is listed once a call, so it counts once.
+  const calls: Case[][][] = [];
+  let used = Infinity;
+  let listed = new Set<string>();
+  const size = (group: Case[]) => group.reduce((n, c) => n + (listed.has(c.rule.id) ? 0
+    : c.rule.quote.length + (c.rule.context?.length ?? 0)), group[0].excerpt.length);
+  for (const group of byKey.values()) {
+    if (used + size(group) > BATCH) {
+      calls.push([]);
+      used = 0;
+      listed = new Set();
+    }
+    used += size(group);
+    calls.at(-1)!.push(group);
+    for (const c of group) listed.add(c.rule.id);
+  }
+  return calls.map((batch) => {
     const rules = new Map<string, number>(); // rule id → its number in the prompt
     const blocks: string[] = [];
     for (const c of batch.flat()) {
