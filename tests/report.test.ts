@@ -185,6 +185,19 @@ test("the rules under the file they are written in: the folder's files first, th
   assert.equal(at('never force-push'), at('never git add -A'));
 });
 
+test('a rule in several files is listed under the first the report lists; the folder\'s files, the shallowest first', () => {
+  const root = '/home/someone/repos/billing/CLAUDE.md';
+  const copy = '/home/someone/repos/billing/.claude/worktrees/w/CLAUDE.md';
+  // Met first in the user's own file, then in a worktree's copy: both found again in the folder's own CLAUDE.md.
+  const report = { ...sketch, files: [own, copy, root], toJudge: 0,
+    rules: [r('never git add -A', 'kept', 3, 0, { files: [own, root], check: { language: 'it' } }),
+      r('never force-push', 'kept', 2, 0, { files: [copy, root], check: { language: 'it' } })] };
+  const out = text(report, { ...options, columns: 120 });
+  assert.match(out, /\n {2}CLAUDE\.md\n {4}✓ never git add -A [^\n]+\n {4}✓ never force-push /);
+  assert.doesNotMatch(out, /worktrees|~\/\.claude/);
+  assert.match(rules(report, { color: false, home: '/home/someone' }), /\n {2}CLAUDE\.md\n {4}✓ never git add -A [^\n]+\n {4}✓ never force-push /);
+});
+
 test('no transcripts: one line naming the folder and the config dir', () => {
   assert.equal(text(empty, options), '\n  no claude code transcripts for ~/repos/app in ~/.claude\n');
 });
@@ -258,6 +271,12 @@ test('heeded rules: by file, each rule under the first file that has it, with ho
 test('heeded rules in colour: the marks', () => {
   assert.equal(rules(found, { color: true, home: '/home/someone' }),
     listed.replace(/✓/g, '\x1b[32m✓\x1b[39m').replace('    · ', '    \x1b[2m·\x1b[22m ').replace('!', '\x1b[33m!\x1b[39m'));
+});
+
+test('one section not read yet, or to read again: its rules', () => {
+  assert.ok(text({ ...sketch, notRead: 1, toReread: 1 }, options).includes(
+    '  1 section not read yet: its rules aren\'t checked until heeded reads it\n'
+    + '  1 section to read again: its rules from before count meanwhile\n'));
 });
 
 test('heeded rules with sections not read yet, or to read again, says so', () => {

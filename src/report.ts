@@ -23,7 +23,8 @@ const tilde = (path: string, home: string) => (path === home || path.startsWith(
 const paint = (color: boolean, code: number, off: number, s: string) => (color ? `\x1b[${code}m${s}\x1b[${off}m` : s);
 /** The sections to read, never read (their rules unchecked) or to read again (their rules from before count). */
 const toRead = (r: Data) => [
-  ...(r.notRead ? [`  ${plural(r.notRead, 'section')} not read yet: their rules aren't checked until heeded reads them`] : []),
+  ...(r.notRead ? [`  ${plural(r.notRead, 'section')} not read yet: `
+    + `${r.notRead === 1 ? "its rules aren't checked until heeded reads it" : "their rules aren't checked until heeded reads them"}`] : []),
   ...(r.toReread ? [`  ${plural(r.toReread, 'section')} to read again: ${r.toReread === 1 ? 'its rules' : 'their rules'} from before`
     + ' count meanwhile'] : []),
 ];
@@ -32,12 +33,17 @@ const toRead = (r: Data) => [
 export const approx = (tokens: number) =>
   (tokens >= 999_500 ? `~${Number((tokens / 1_000_000).toFixed(1))}M` : `~${Math.round(tokens / 1000)}k`);
 
-/** The instruction files in the order the report and `heeded rules` list them: the folder's own first, then the files
- * from outside it (the user's own file, a parent folder's), each in the order heeded met them. */
+/** The instruction files in the order the report and `heeded rules` list them: the folder's own first, the shallowest
+ * first (a worktree's copy after the file it copies), then the files from outside it (the user's own file, a parent
+ * folder's); otherwise in the order heeded met them. */
 const inOrder = (r: Report) => {
   const inside = (f: string) => f.startsWith(`${r.folder}/`);
-  return [...r.files.filter(inside), ...r.files.filter((f) => !inside(f))];
+  const depth = (f: string) => f.split('/').length;
+  return [...r.files.filter(inside).toSorted((a, b) => depth(a) - depth(b)), ...r.files.filter((f) => !inside(f))];
 };
+
+/** The file a rule is listed under: of the files it is written in, the first listed. */
+const under = (order: string[], x: RuleData) => order.find((f) => x.files.includes(f));
 
 /** A file as the user finds it: by its path in the folder, or from home. */
 const where = (r: Report, path: string, home: string) =>
@@ -93,7 +99,8 @@ export function text(r: Report, o: TextOptions): string {
   const never = (x: RuleData) => x.status === 'never-applied' || unapplied.includes(x);
   // Grouped by the file each rule is written in (the first, when it is in several), each file in that order.
   const listed = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)];
-  const shown = inOrder(r).flatMap((f) => listed.filter((x) => x.files[0] === f));
+  const order = inOrder(r);
+  const shown = order.flatMap((f) => listed.filter((x) => under(order, x) === f));
   const rows = shown.map((x) => [x.name, ...(never(x)
     ? [`never applied${x.judged ? ` in ${thousands(x.judged)} judged` : ''}`, `~${thousands(x.tokens)} tokens every session`]
     : x.status === 'to-confirm' ? []
@@ -107,7 +114,8 @@ export function text(r: Report, o: TextOptions): string {
   const lines = laid(width).map((l, i) => cut(`    ${never(shown[i]) ? '○' : mark[shown[i].status]} ${l}`, o.columns));
   const rules: string[] = [];
   shown.forEach((x, i) => {
-    if (x.files[0] !== shown[i - 1]?.files[0]) rules.push(`  ${where(r, x.files[0], o.home)}`);
+    const file = under(order, x)!;
+    if (i === 0 || file !== under(order, shown[i - 1])) rules.push(`  ${where(r, file, o.home)}`);
     rules.push(lines[i]);
     if (x.afterCompaction.applied >= 20) {
       const { applied, broken } = x.afterCompaction;
@@ -170,8 +178,9 @@ function patterns(c: NonNullable<RuleData['check']>): string {
 export function rules(r: Report, o: { color: boolean; home: string }): string {
   const width = Math.max(...r.rules.map((x) => x.name.length));
   const lines = ['', `  ${tilde(r.folder, o.home)} · ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')}`, ''];
-  for (const file of inOrder(r)) {
-    const mine = r.rules.filter((x) => x.files[0] === file);
+  const order = inOrder(r);
+  for (const file of order) {
+    const mine = r.rules.filter((x) => under(order, x) === file);
     if (mine.length) lines.push(`  ${where(r, file, o.home)}`);
     for (const x of mine) {
       const mark = x.status === 'judgment' ? paint(o.color, 2, 22, '·') : x.status === 'demoted' ? paint(o.color, 33, 39, '!')
