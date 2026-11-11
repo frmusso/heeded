@@ -129,6 +129,8 @@ export function text(r: Report, o: TextOptions): string {
     ...(aside ? [`  ${aside}: heeded rules`] : []),
     ...(r.notRead ? [notRead(r.notRead)] : []),
     ...(r.toJudge ? [`  ${plural(r.toJudge, 'case')} waiting for the judge, ${approx(r.toJudgeTokens)} tokens: ${todo}`] : []),
+    // Nothing a run could read or judge: said, or a user can't tell a finished report from one with work left.
+    ...(r.notRead || r.toJudge ? [] : ['  up to date: new sessions and changes to instruction files are read on the next run']),
     ...unrecognized,
   ];
   return out([[header, counts], rules, depth, end]);

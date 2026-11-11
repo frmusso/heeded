@@ -163,6 +163,14 @@ test('the end: the rules no case shows and those set aside, then the cases waiti
     + '  837 cases waiting for the judge, ~2.7M tokens: heeded judges ~150k a run, heeded --all all of them\n');
 });
 
+test('nothing to read and no case waiting: the report says it is up to date, and how it keeps up', () => {
+  const end = (more: Partial<Report>) => text({ ...sketch, ...more }, options).split('\n\n').at(-1)!;
+  assert.equal(end({ toJudge: 0 }), '  1 rule no call or reply shows: heeded rules\n'
+    + '  up to date: new sessions and changes to instruction files are read on the next run\n');
+  assert.doesNotMatch(end({}), /up to date/);
+  assert.doesNotMatch(end({ toJudge: 0, notRead: 2 }), /up to date/);
+});
+
 test('tokens as heeded says them', () => {
   assert.deepEqual([106_000, 999_499, 999_500, 1_140_000, 2_702_000].map(approx), ['~106k', '~999k', '~1M', '~1.1M', '~2.7M']);
 });
@@ -210,6 +218,7 @@ test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of 
                               1%          –          –       –
 
   1 rule no call or reply shows, 1 set aside: heeded rules
+  up to date: new sessions and changes to instruction files are read on the next run
 `);
 });
 
