@@ -124,7 +124,7 @@ export function compile(check: Check): Compiled | string {
 }
 
 /** A sequence rule's check compiled: the calls it is about, and the one that must come first or follow. */
-export interface Sequence { when: Compiled; first?: Compiled; then?: Compiled }
+interface Sequence { when: Compiled; first?: Compiled; then?: Compiled }
 
 /** A sequence rule's patterns compiled, or why they can't be used. */
 export function sequence(check: Check): Sequence | string {
@@ -132,6 +132,10 @@ export function sequence(check: Check): Sequence | string {
   if (!check.first && !check.then) return 'neither first nor then';
   if (check.first && check.then) return 'both first and then';
   const step = (check.first ?? check.then)!;
+  const every = (p: { tool?: string; value?: string; data?: string }) => p.tool === undefined && p.value === undefined
+    && p.data === undefined;
+  if (every(check.when)) return 'when takes every call';
+  if (every(step)) return `${check.first ? 'first' : 'then'} takes every call`;
   const when = compile({ field: check.field, when: check.when, ignoreCase: check.ignoreCase });
   if (typeof when === 'string') return when;
   const other = compile({ field: step.field, when: { tool: step.tool, value: step.value, data: step.data },
@@ -143,9 +147,11 @@ export function sequence(check: Check): Sequence | string {
 /**
  * One session's walk through a sequence rule, call by call: each call the rule is about is kept or broken as soon as
  * that is known. A `first` must have come earlier in the session; a `then` must follow before the turn ends (`end`).
- * A call given without an item (copied from an earlier session) moves the walk on and is no case.
+ * A call given without an item (copied from an earlier session, or while the rule is not in effect) moves the walk on
+ * and is no case. A `late` walk began after the session's first calls: a first it hasn't seen may have come among them,
+ * so before it sees one, a case is none.
  */
-export function walk<T>(s: Sequence) {
+export function walk<T>(s: Sequence, late = false) {
   let came = false; // a call matching `first`
   let waiting: T[] = []; // calls the rule is about, waiting for their `then`
   return {
@@ -157,8 +163,9 @@ export function walk<T>(s: Sequence) {
       }
       // Before this call counts as a first: a call never keeps itself.
       if (item !== null && applies(s.when, tool, input)) {
-        if (s.first) decided.push({ item, broken: !came });
-        else waiting.push(item);
+        if (s.first) {
+          if (came || !late) decided.push({ item, broken: !came });
+        } else waiting.push(item);
       }
       if (s.first && !came && applies(s.first, tool, input)) came = true;
       return decided;
@@ -335,6 +342,7 @@ function wait(list: Excerpt[], x: Excerpt) {
 }
 
 type Seen = Extract<Event, { kind: 'call' | 'reply' }>;
+type Call = Extract<Event, { kind: 'call' }>;
 
 /** A violation in one line, secrets redacted: what in the call broke the rule, a reply's language and first words. */
 function evidence(e: Seen, c: Compiled | null, detected: string | null): string {
@@ -350,7 +358,8 @@ function evidence(e: Seen, c: Compiled | null, detected: string | null): string 
  * Counts, over a stream of events, how often each rule applied and how often it was broken. Each transcript starts with
  * no file in effect; the rules in effect are those of the files its `instructions` events recorded. A call a tool
  * rule's patterns say broke it is a candidate, and a call or reply a judgment rule is about is a case of it: either
- * counts by the judge's verdict, and waits for one until then.
+ * counts by the judge's verdict, and waits for one until then. A sequence rule's case counts as its walk through the
+ * session decides it, without a judge.
  */
 export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; versions: Version[] } | null,
   verdictOf: (rule: string, key: string) => Verdict | null = () => null) {
@@ -362,9 +371,14 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
   type Finder = { field?: string; tool?: RegExp; whens: { when: Patterns; tallies: Tally[] }[] };
   let finders: Finder[] = [];
   let replying: Tally[] = [];
-  // The sequence rules in effect, and each one's walk through the session read now: a session's order is its own.
-  let ordered: Tally[] = [];
-  let walks = new Map<Tally, ReturnType<typeof walk<Seen>>>();
+  // Every sequence rule met so far, those in effect now, and each one's walk through the session read now: a session's
+  // order is its own, and a rule out of effect still watches it, for when it comes back. A case is counted once, in
+  // the session that decides it: a turn a session never saw end is decided by the one that resumes it.
+  const sequenced: Tally[] = [];
+  let ordered = new Set<Tally>();
+  let walks = new Map<Tally, ReturnType<typeof walk<Call>>>();
+  let calls = 0;
+  const decided = new Set<string>();
   // Resumed and forked sessions copy history into new files: an event counts once. Only events a rule applied to are
   // remembered.
   const seen = new Set<string>();
@@ -388,7 +402,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     const whens = new Map<string, { when: Patterns; tallies: Tally[] }>();
     checked = [];
     replying = [];
-    ordered = [];
+    ordered = new Set();
     current = [];
     for (const file of inEffect.values()) {
       const found = rulesOf(file);
@@ -410,8 +424,13 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
             || (rule.kind === 'judgment' && !rule.noCases && rule.check?.reply !== true)
             ? compile(rule.check!) as Compiled : steps?.when ?? null;
           t = { rule, files: new Set(), all: zero(), after: zero(), depth: DEPTHS.map(zero), evidence: [], compiled, judged: 0,
-            unjudged: 0, waiting: [], ...(steps ? { sequence: steps } : {}) };
+            unjudged: 0, waiting: [], sequence: steps };
           tallies.set(rule.id, t);
+          if (steps) {
+            sequenced.push(t);
+            // Met after the session's first calls: those went unwatched.
+            if (calls) walks.set(t, walk<Call>(steps, true));
+          }
         }
         t.files.add(file.path);
         // A quote read two ways (two versions of a section) is one rule: it is counted as it was first read, which its
@@ -419,7 +438,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         const { demoted, noCases, kind, check } = t.rule;
         if (!ids.has(rule.id) && !demoted && !noCases) {
           ids.add(rule.id);
-          if (kind === 'sequence') ordered.push(t);
+          if (kind === 'sequence') ordered.add(t);
           else if (kind !== 'judgment') checked.push(t);
           else if (check?.reply === true) replying.push(t);
           else {
@@ -527,16 +546,22 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     }
   }
 
-  /** A sequence rule's evidence: the call that came without the other, with its tool unless it is a command. */
-  const called = (t: Tally, e: Seen) => (e.kind === 'call' && e.tool !== 'Bash' ? `${e.tool} ` : '') + evidence(e, t.compiled, null);
+  /** A sequence rule's case, counted: its evidence the call that came without the other, with its tool unless it is a
+   * command. */
+  function countOrder(t: Tally, e: Call, broken: boolean) {
+    decided.add(`${t.rule.id}\0${e.id}`);
+    record(t, e, broken, () => (e.tool === 'Bash' ? '' : `${e.tool} `) + evidence(e, t.compiled, null));
+  }
 
-  /** A call in the order of the session: each sequence rule's walk takes it; a copied call moves the walk on only. */
-  function order(e: Extract<Seen, { kind: 'call' }>, fresh: boolean) {
-    for (const t of ordered) {
+  /** A call in the order of the session: every sequence rule's walk takes it, as a case only for the rules in effect
+   * that haven't counted it yet. */
+  function order(e: Call) {
+    calls++;
+    for (const t of sequenced) {
       let w = walks.get(t);
-      if (!w) walks.set(t, (w = walk<Seen>(t.sequence!)));
-      if (fresh && applies(t.compiled!, e.tool, e.input)) seen.add(e.id);
-      for (const d of w.call(e.tool, e.input, fresh ? e : null)) record(t, d.item, d.broken, () => called(t, d.item));
+      if (!w) walks.set(t, (w = walk<Call>(t.sequence!)));
+      const item = ordered.has(t) && !decided.has(`${t.rule.id}\0${e.id}`) ? e : null;
+      for (const d of w.call(e.tool, e.input, item)) countOrder(t, d.item, d.broken);
     }
   }
 
@@ -549,9 +574,10 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         checked = [];
         finders = [];
         replying = [];
-        ordered = [];
-        // A turn the transcript doesn't see end proves nothing of a then: its calls are no case.
+        ordered = new Set();
+        // A turn the transcript doesn't see end proves nothing of a then: its calls are no case here.
         walks = new Map();
+        calls = 0;
         current = [];
       } else if (e.kind === 'instructions') {
         if (e.replace) inEffect = new Map();
@@ -559,12 +585,14 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         refresh();
       } else if (e.kind === 'call' || e.kind === 'reply') {
         for (const c of current) if (e.at > c.at) c.at = e.at;
-        const fresh = !seen.has(e.id);
-        if (fresh) count(e);
-        if (e.kind === 'call' && !e.own) order(e, fresh);
+        if (!seen.has(e.id)) count(e);
+        if (e.kind === 'call' && !e.own) order(e);
       } else if (e.kind === 'prompt' && e.starts) {
         // The turn ended: a then that didn't come broke its rule.
-        for (const [t, w] of walks) for (const x of w.end()) record(t, x, true, () => called(t, x));
+        for (const [t, w] of walks) for (const x of w.end()) countOrder(t, x, true);
+      } else if (e.kind === 'interrupted') {
+        // The user stopped the turn: a then the agent had no time for proves nothing.
+        for (const w of walks.values()) w.end();
       }
       // Copies are counted once, but their events still lead to the ones after them.
       excerpt.push(e);

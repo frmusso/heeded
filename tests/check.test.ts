@@ -237,6 +237,10 @@ test("a sequence check that can't be used says why", () => {
   assert.equal(sequence({ ...readFirst, then: buildAfter.then }), 'both first and then');
   assert.equal(sequence({ ...readFirst, first: { tool: '(' } }), "regex doesn't compile: (");
   assert.equal(sequence({ ...buildAfter, when: { value: '(a+)+' } }), 'regex may take exponential time: (a+)+');
+  // A pattern without a tool, a value or data would take every call.
+  assert.equal(sequence({ ...readFirst, when: {} }), 'when takes every call');
+  assert.equal(sequence({ ...readFirst, first: { field: 'file_path' } }), 'first takes every call');
+  assert.equal(sequence({ ...buildAfter, then: {} }), 'then takes every call');
 });
 
 const confirmed = (): Verdict => ({ verdict: 'broken' });
@@ -306,6 +310,47 @@ test("a session's calls copied into a resumed one move the walk on and are no ca
     { ...edits('/r/shared/context/m.md'), own: true } as Event],
   { S: [readsFirst] });
   assert.deepEqual(counts(data, readsFirst), { status: 'kept', applied: 2, broken: 0 });
+});
+
+test("a resumed session's copy of a turn the first transcript never saw end counts once that turn ends", () => {
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'S' }), edits('/r/src/a.ts', { id: 'e1' }),
+    start('s2'), files({ '/r/CLAUDE.md': 'S' }), edits('/r/src/a.ts', { id: 'e1' }), prompt('next')], { S: [buildsAfter] });
+  assert.deepEqual(counts(data, buildsAfter), { status: 'broken', applied: 1, broken: 1 });
+});
+
+test('a rule that leaves effect while a case waits still sees the call that keeps it', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'S' }), edits('/r/src/a.ts'), files({ '/r/CLAUDE.md': 'X' }, true),
+    bash('npm run build'), prompt('next')], { S: [buildsAfter] });
+  assert.deepEqual(counts(data, buildsAfter), { status: 'kept', applied: 1, broken: 0 });
+});
+
+test('a first rule known from an earlier session sees the calls before it comes into effect; a new one never breaks blind', () => {
+  // Loaded mid-session for the first time: the calls before it weren't watched, so a case it can't decide is none.
+  const blind = count([start('s1'), files({ '/r/CLAUDE.md': 'X' }), reads('/r/shared/CLAUDE.md'),
+    files({ '/r/shared/CLAUDE.md': 'S' }), edits('/r/shared/context/a.md')], { S: [readsFirst] });
+  assert.deepEqual(counts(blind, readsFirst), { status: 'never-applied', applied: 0, broken: 0 });
+  // Known since an earlier session: this one's calls are watched from its start.
+  const known = count([start('s0'), files({ '/r/shared/CLAUDE.md': 'S' }), bash('ls'),
+    start('s1'), files({ '/r/CLAUDE.md': 'X' }), reads('/r/shared/CLAUDE.md'), files({ '/r/shared/CLAUDE.md': 'S' }),
+    edits('/r/shared/context/a.md')], { S: [readsFirst] });
+  assert.deepEqual(counts(known, readsFirst), { status: 'kept', applied: 1, broken: 0 });
+});
+
+test("an interrupted turn proves nothing of a then: the agent had no time for it", () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'S' }), edits('/r/src/a.ts'), { kind: 'interrupted', at: '2026-11-02T10:00:00Z' },
+    prompt('no, do this instead'), edits('/r/src/b.ts', { compactions: 1 }), prompt('next')], { S: [buildsAfter] });
+  assert.deepEqual(counts(data, buildsAfter), { status: 'broken', applied: 1, broken: 1 });
+  // A case decided at the turn's end is counted where it was made: after a compaction.
+  assert.deepEqual(data.rules[0].afterCompaction, { applied: 1, broken: 1 });
+});
+
+test('two sequence rules and a tool rule on one call each count it', () => {
+  const both = rule({ ...buildsAfter, quote: 'build again after changing src/', name: 'build again' });
+  const data = count([start(), files({ '/r/CLAUDE.md': 'S' }), edits('/r/src/a.ts'), bash('npm run build && git add -A'),
+    prompt('next')], { S: [buildsAfter, both, addAll] });
+  for (const r of [buildsAfter, both]) assert.deepEqual(counts(data, r), { status: 'kept', applied: 1, broken: 0 });
+  // The tool rule's candidate, confirmed by the judge these tests stand in for.
+  assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 1, broken: 1 });
 });
 
 test('a sequence rule no call was about is never applied', () => {

@@ -16,7 +16,9 @@ export type Event =
   // A prompt: by the user in a main session; in a subagent's, the task the agent that started it wrote. `starts` when it
   // starts a turn; the user's words given mid-turn don't: an answer to the agent's question or plan, a slash command, a
   // prompt typed while the agent worked. `session` for the instructions the user set for the whole session.
-  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; starts: boolean; session?: true };
+  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; starts: boolean; session?: true }
+  // The user stopped the agent's turn before it ended.
+  | { kind: 'interrupted'; at: string };
 type Reply = Extract<Event, { kind: 'reply' }>;
 
 /** A folder's entries by name; none when it doesn't exist. */
@@ -143,9 +145,10 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
     if (command) {
       const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(start)?.[1] ?? '';
       emit({ kind: 'prompt', text: `${command[1]} ${args}`.trim(), at: o.timestamp, by: 'user', starts: false });
-    } else if (start && start[0] !== '<' && !start.startsWith('[Request interrupted')) {
-      // Other lines starting with a tag are Claude Code's own (a command's output, a notification), as is an
-      // interruption's note.
+    } else if (start.startsWith('[Request interrupted')) {
+      emit({ kind: 'interrupted', at: o.timestamp });
+    } else if (start && start[0] !== '<') {
+      // Other lines starting with a tag are Claude Code's own (a command's output, a notification).
       emit({ kind: 'prompt', text, at: o.timestamp, by: state.replies ? 'user' : 'agent', starts: true });
     }
   } else if (o.type === 'attachment' && a?.type === 'queued_command' && a.commandMode === 'prompt' && a.origin?.kind === 'human'

@@ -35,7 +35,7 @@ $ npx heeded
 
 | mark | the rule |
 | --- | --- |
-| `✗` | was broken: every case confirmed by the judge, listed with its date, session and what shows it |
+| `✗` | was broken: each case listed with its date, session and what shows it |
 | `✓` | was kept every time it applied |
 | `?` | has candidates only: a pattern flagged them, the judge hasn't looked yet |
 | `○` | never applied in these sessions: it sits in every session's context all the same |
@@ -107,11 +107,13 @@ to type `heeded` instead of `npx heeded`, install it: `npm install -g heeded`.
    a check that fails its own examples is set aside. a section is read once, then cached.
 3. **check every call.** one pass over the transcripts: each call and reply against the rules in effect at that point.
    a shell command is read the way a shell reads it, so `echo "rm -rf"` isn't running `rm`. a rule about order follows
-   each session: the call it asks for must have come earlier in the session, or follow before the agent's turn ends.
-4. **judge.** a pattern finds candidates, not violations. each candidate, and a sample of the cases no pattern can
-   decide, goes to `claude` (haiku) with an excerpt of its session: your prompt, what the agent did since, the call
-   itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. an
-   excerpt goes once, with every rule it is a case of (an edit of a component is a case of every rule about
+   each session and needs no judge: the call it asks for must have come earlier in the session, or follow before the
+   agent's turn ends (your next message; an interrupted turn proves nothing, and a turn not ended yet, or a subagent's,
+   is no case).
+4. **judge.** a pattern over one call finds candidates, not violations. each candidate, and a sample of the cases no
+   pattern can decide, goes to `claude` (haiku) with an excerpt of its session: your prompt, what the agent did since,
+   the call itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never
+   do. an excerpt goes once, with every rule it is a case of (an edit of a component is a case of every rule about
    components), and each verdict is cached. a rule the judge decides is tried on 8 of its cases first: if none is
    about it, it stops there; if some are, it goes on to 20 cases that applied, or 40 judged. up to 3 calls run at
    once.

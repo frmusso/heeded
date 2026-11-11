@@ -357,8 +357,7 @@ For each rule:
 - kind: "tool" when a single tool call shows, without doubt and whatever came before it, whether the rule was kept or
   broken; "language" for the language the agent must use in its replies to the user (not in code, commits or files);
   "sequence" when the rule asks for a call before or after another call, each shown by a call (read a file before
-  editing another, run the build after changing the source, run the tests before merging); "judgment" for everything
-  else. A rule with an exception, or a condition one call can't show (the user's go or request, being asked first, a
+  editing another, run the build after changing the source); "judgment" for everything else. A rule with an exception, or a condition one call can't show (the user's go or request, being asked first, a
   folder or a sub-project, a time, before or after something no call shows), is "judgment".
 - trigger: when the rule applies, in a few words ("staging files with git").
 
@@ -394,6 +393,8 @@ about; and either "first", the call that must have come earlier in the same sess
 follow it before the agent's turn ends (the user's next message): each { "field", "tool", "value", "data" }, read as
 "when" is. breaking: the calls of a session, in order, that break it (a call it is about without the other); keeping:
 the calls of one that keeps it. Each example { "tool", "value" } gives the value of the field its own pattern reads.
+A "first" holds for the rest of the session once its call came: a rule asking for it each time (a failing test before
+each change) or for the user's go is "judgment".
 
 A "judgment" rule has a check that finds the cases a judge will read whenever some calls or replies can show it kept
 or broken, however many they are: { "reply": true } for a rule about what the agent tells the user; else the calls it
