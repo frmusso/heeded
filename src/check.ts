@@ -295,6 +295,8 @@ export interface Data {
 interface Tally {
   rule: Rule; files: Set<string>; all: Count; after: Count; depth: Count[]; evidence: Evidence[]; compiled: Compiled | null;
   judged: number; unjudged: number; waiting: Excerpt[];
+  /** A sequence rule's check: its `compiled` is the calls it is about. */
+  sequence?: Sequence;
 }
 
 /** The cases a rule keeps waiting, at most: a run judges far fewer. */
@@ -360,6 +362,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
   type Finder = { field?: string; tool?: RegExp; whens: { when: Patterns; tallies: Tally[] }[] };
   let finders: Finder[] = [];
   let replying: Tally[] = [];
+  // The sequence rules in effect, and each one's walk through the session read now: a session's order is its own.
+  let ordered: Tally[] = [];
+  let walks = new Map<Tally, ReturnType<typeof walk<Seen>>>();
   // Resumed and forked sessions copy history into new files: an event counts once. Only events a rule applied to are
   // remembered.
   const seen = new Set<string>();
@@ -383,6 +388,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     const whens = new Map<string, { when: Patterns; tallies: Tally[] }>();
     checked = [];
     replying = [];
+    ordered = [];
     current = [];
     for (const file of inEffect.values()) {
       const found = rulesOf(file);
@@ -397,12 +403,14 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
       for (const rule of found.rules) {
         let t = tallies.get(rule.id);
         if (!t) {
-          // verify demoted every tool rule, and gave no cases to every judgment rule, whose check doesn't compile
+          // verify demoted every tool and sequence rule, and gave no cases to every judgment rule, whose check doesn't
+          // compile
+          const steps = rule.kind === 'sequence' && !rule.demoted ? sequence(rule.check!) as Sequence : undefined;
           const compiled = (rule.kind === 'tool' && !rule.demoted)
             || (rule.kind === 'judgment' && !rule.noCases && rule.check?.reply !== true)
-            ? compile(rule.check!) as Compiled : null;
+            ? compile(rule.check!) as Compiled : steps?.when ?? null;
           t = { rule, files: new Set(), all: zero(), after: zero(), depth: DEPTHS.map(zero), evidence: [], compiled, judged: 0,
-            unjudged: 0, waiting: [] };
+            unjudged: 0, waiting: [], ...(steps ? { sequence: steps } : {}) };
           tallies.set(rule.id, t);
         }
         t.files.add(file.path);
@@ -411,7 +419,8 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         const { demoted, noCases, kind, check } = t.rule;
         if (!ids.has(rule.id) && !demoted && !noCases) {
           ids.add(rule.id);
-          if (kind !== 'judgment') checked.push(t);
+          if (kind === 'sequence') ordered.push(t);
+          else if (kind !== 'judgment') checked.push(t);
           else if (check?.reply === true) replying.push(t);
           else {
             const { field, when, ignoreCase } = check!;
@@ -518,6 +527,19 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
     }
   }
 
+  /** A sequence rule's evidence: the call that came without the other, with its tool unless it is a command. */
+  const called = (t: Tally, e: Seen) => (e.kind === 'call' && e.tool !== 'Bash' ? `${e.tool} ` : '') + evidence(e, t.compiled, null);
+
+  /** A call in the order of the session: each sequence rule's walk takes it; a copied call moves the walk on only. */
+  function order(e: Extract<Seen, { kind: 'call' }>, fresh: boolean) {
+    for (const t of ordered) {
+      let w = walks.get(t);
+      if (!w) walks.set(t, (w = walk<Seen>(t.sequence!)));
+      if (fresh && applies(t.compiled!, e.tool, e.input)) seen.add(e.id);
+      for (const d of w.call(e.tool, e.input, fresh ? e : null)) record(t, d.item, d.broken, () => called(t, d.item));
+    }
+  }
+
   return {
     on(e: Event) {
       if (e.kind === 'transcript') {
@@ -527,6 +549,9 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         checked = [];
         finders = [];
         replying = [];
+        ordered = [];
+        // A turn the transcript doesn't see end proves nothing of a then: its calls are no case.
+        walks = new Map();
         current = [];
       } else if (e.kind === 'instructions') {
         if (e.replace) inEffect = new Map();
@@ -534,7 +559,12 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
         refresh();
       } else if (e.kind === 'call' || e.kind === 'reply') {
         for (const c of current) if (e.at > c.at) c.at = e.at;
-        if (!seen.has(e.id)) count(e);
+        const fresh = !seen.has(e.id);
+        if (fresh) count(e);
+        if (e.kind === 'call' && !e.own) order(e, fresh);
+      } else if (e.kind === 'prompt' && e.starts) {
+        // The turn ended: a then that didn't come broke its rule.
+        for (const [t, w] of walks) for (const x of w.end()) record(t, x, true, () => called(t, x));
       }
       // Copies are counted once, but their events still lead to the ones after them.
       excerpt.push(e);

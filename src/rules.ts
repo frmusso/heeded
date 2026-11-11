@@ -64,7 +64,7 @@ export interface Rule {
   context?: string;
   /** The instruction file it was read from: a rule meant for one folder is told by where it is written. */
   file?: string;
-  kind: 'tool' | 'language' | 'judgment';
+  kind: 'tool' | 'language' | 'judgment' | 'sequence';
   trigger: string;
   check?: Check & { language?: string };
   breaking?: Example[];

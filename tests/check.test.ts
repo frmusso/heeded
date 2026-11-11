@@ -264,6 +264,55 @@ const counts = (data: Data, r: Rule) => {
   return found && { status: found.status, applied: found.applied, broken: found.broken };
 };
 
+// Sequence rules over sessions.
+const call = (tool: string, input: Record<string, unknown>, w: When = {}): Event => ({ kind: 'call', id: w.id ?? `tu${++ids}`,
+  tool, input, at: w.at ?? '2026-11-02T10:00:00Z', depth: w.depth ?? 0, compactions: w.compactions ?? 0 });
+const prompt = (text: string, starts = true): Event => ({ kind: 'prompt', text, at: '2026-11-02T10:00:00Z', by: 'user', starts });
+const reads = (file_path: string, w: When = {}) => call('Read', { file_path }, w);
+const edits = (file_path: string, w: When = {}) => call('Edit', { file_path }, w);
+const readsFirst = rule({ quote: 'read shared/CLAUDE.md before editing shared/context/', name: 'read shared/CLAUDE.md first',
+  kind: 'sequence', trigger: 'editing the shared context', check: readFirst,
+  breaking: [{ tool: 'Edit', value: '/r/shared/context/a.md' }],
+  keeping: [{ tool: 'Read', value: '/r/shared/CLAUDE.md' }, { tool: 'Edit', value: '/r/shared/context/a.md' }] });
+const buildsAfter = rule({ quote: 'run npm run build after changing src/', name: 'build after changing src',
+  kind: 'sequence', trigger: 'changing the source', check: buildAfter,
+  breaking: [{ tool: 'Edit', value: '/r/src/a.ts' }],
+  keeping: [{ tool: 'Edit', value: '/r/src/a.ts' }, { tool: 'Bash', value: 'npm run build' }] });
+
+test('a sequence rule is counted over each session: a first anywhere earlier; a subagent is a session of its own', () => {
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'S' }), edits('/r/shared/context/a.md', { at: '2026-11-02T10:00:00Z' }),
+    prompt('next'), reads('/r/shared/CLAUDE.md'), edits('/r/shared/context/b.md'), bash('ls'),
+    start('s1', 'sub'), files({ '/r/CLAUDE.md': 'S' }), edits('/r/shared/context/c.md', { at: '2026-11-03T10:00:00Z' })],
+  { S: [readsFirst] });
+  assert.deepEqual(counts(data, readsFirst), { status: 'broken', applied: 3, broken: 2 });
+  const found = data.rules.find((r) => r.id === readsFirst.id)!;
+  assert.deepEqual(found.evidence.map((e) => e.text), ['Edit /r/shared/context/c.md', 'Edit /r/shared/context/a.md']);
+  assert.equal(found.toJudge, 0);
+});
+
+test('a then is looked for until the turn ends: an answer mid-turn is no end; a turn not seen to end is not counted', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'S' }), edits('/r/src/a.ts'), prompt('yes, go on', false),
+    edits('/r/src/b.ts'), bash('npm run build'), edits('/r/src/c.ts'), prompt('next'), edits('/r/src/d.ts')],
+  { S: [buildsAfter] });
+  assert.deepEqual(counts(data, buildsAfter), { status: 'broken', applied: 3, broken: 1 });
+  assert.deepEqual(data.rules[0].evidence.map((e) => e.text), ['Edit /r/src/c.ts']);
+});
+
+test("a session's calls copied into a resumed one move the walk on and are no case again; the agent's own calls none", () => {
+  const data = count([start('s1'), files({ '/r/CLAUDE.md': 'S' }), reads('/r/shared/CLAUDE.md', { id: 'r1' }),
+    edits('/r/shared/context/a.md', { id: 'e1' }),
+    start('s2'), files({ '/r/CLAUDE.md': 'S' }), reads('/r/shared/CLAUDE.md', { id: 'r1' }),
+    edits('/r/shared/context/a.md', { id: 'e1' }), edits('/r/shared/context/b.md', { id: 'e2' }),
+    { ...edits('/r/shared/context/m.md'), own: true } as Event],
+  { S: [readsFirst] });
+  assert.deepEqual(counts(data, readsFirst), { status: 'kept', applied: 2, broken: 0 });
+});
+
+test('a sequence rule no call was about is never applied', () => {
+  const data = count([start(), files({ '/r/CLAUDE.md': 'S' }), bash('ls')], { S: [buildsAfter] });
+  assert.deepEqual(counts(data, buildsAfter), { status: 'never-applied', applied: 0, broken: 0 });
+});
+
 test('a tool rule: the calls it applies to, and the ones that broke it', () => {
   const data = count([start(), files({ '/r/CLAUDE.md': 'A' }), bash('git add -A'), bash('git add a.ts'), bash('ls')], { A: [addAll] });
   assert.deepEqual(counts(data, addAll), { status: 'broken', applied: 2, broken: 1 });
