@@ -13,8 +13,8 @@ export type Event =
   | { kind: 'reply'; id: string; text: string; at: string; depth: number; compactions: number }
   // A prompt: by the user in a main session; in a subagent's, the task the agent that started it wrote. `starts` when it
   // starts a turn; the user's words given mid-turn don't: an answer to the agent's question or plan, a slash command, a
-  // prompt typed while the agent worked.
-  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; starts: boolean };
+  // prompt typed while the agent worked. `session` for the instructions the user set for the whole session.
+  | { kind: 'prompt'; text: string; at: string; by: 'user' | 'agent'; starts: boolean; session?: true };
 type Reply = Extract<Event, { kind: 'reply' }>;
 
 /** A folder's entries by name; none when it doesn't exist. */
@@ -70,13 +70,19 @@ const tokens = (v: unknown) => (typeof v === 'number' ? v : 0);
 const textOf = (c: unknown) => (typeof c === 'string' ? c
   : Array.isArray(c) ? c.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n') : '');
 
+/** A launcher that appends the user's own instructions to the system prompt marks them with this tag; the rest of the
+ * system prompt is Claude Code's, or the launcher's. */
+const INSTRUCTIONS = /<user-instructions>([\s\S]*?)<\/user-instructions>/g;
+
 /** The events of one line; false when it should have parsed and didn't. Only the lines heeded needs are parsed, found
- * by a substring first: a tool result, the bulk of a transcript, only when it answers one of the agent's questions. */
+ * by a substring first: a tool result, the bulk of a transcript, only when it answers one of the agent's questions; the
+ * system prompt only when it holds the user's instructions. */
 function onLine(line: string, state: State, out: (e: Event) => void): boolean {
   const user = line.includes('"type":"user"');
   const result = user ? /"tool_use_id":"([^"]*)"/.exec(line) : null;
   if (!line.includes('"type":"assistant"') && !line.includes('"type":"instructions"')
     && !line.includes('"type":"nested_memory"') && !line.includes('"compact_boundary"') && !line.includes('"queued_command"')
+    && !(line.includes('"prompt_snapshot"') && line.includes('<user-instructions>'))
     && !(user && (!result || state.asked.has(result[1])))) return true;
   let o;
   try {
@@ -142,6 +148,11 @@ function onLine(line: string, state: State, out: (e: Event) => void): boolean {
     // What the user typed while the agent worked reaches it mid-turn, recorded only here.
     const text = textOf(a.prompt);
     if (text.trim()) emit({ kind: 'prompt', text, at: o.timestamp, by: 'user', starts: false });
+  } else if (o.type === 'attachment' && a?.type === 'prompt_snapshot' && Array.isArray(a.systemPrompt)
+    && typeof o.timestamp === 'string' && !Number.isNaN(Date.parse(o.timestamp))) {
+    const parts = a.systemPrompt.filter((p: unknown) => typeof p === 'string');
+    const text = parts.flatMap((p: string) => [...p.matchAll(INSTRUCTIONS)].map((m) => m[1].trim())).filter(Boolean).join('\n');
+    if (text) emit({ kind: 'prompt', text, at: o.timestamp, by: 'user', starts: false, session: true });
   } else if (o.type === 'attachment' && a?.type === 'instructions' && Array.isArray(a.files)) {
     // After a compaction Claude Code records every file in effect again: they replace the ones before.
     emit({ kind: 'instructions', files: a.files.filter(isFile), replace: state.replace });

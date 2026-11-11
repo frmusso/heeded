@@ -25,6 +25,12 @@ export const meta = (text: string): Line => ({ type: 'user', isMeta: true, messa
 export const queued = (prompt: string, commandMode = 'prompt', kind = 'human'): Line => ({
   type: 'attachment', attachment: { type: 'queued_command', prompt, commandMode, origin: { kind } },
 });
+/** The system prompt a request was sent with, in parts: Claude Code's own text, then what the session's launcher
+ * appended. */
+export const snapshot = (parts: string[]): Line => ({
+  type: 'attachment',
+  attachment: { type: 'prompt_snapshot', systemPrompt: parts, reminderFold: false, echoWireToolInputs: true, contextRendering: 'announced' },
+});
 /** A tool call's result: Claude Code writes it as a user line, the call's id first in its block. */
 export const answer = (toolUseId: string, content: string | { type: 'text'; text: string }[]): Line => ({
   type: 'user', message: { role: 'user', content: [{ tool_use_id: toolUseId, type: 'tool_result', content }] }, toolUseResult: {},

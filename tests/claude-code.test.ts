@@ -4,8 +4,8 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { type Event, read } from '../src/claude-code.ts';
 import { sandbox } from './support/sandbox.ts';
-import { answer, assistant, compact, instructions, type Line, meta, nested, noise, queued, summary, user, writeSession }
-  from './support/transcript.ts';
+import { answer, assistant, compact, instructions, type Line, meta, nested, noise, queued, snapshot, summary, user,
+  writeSession } from './support/transcript.ts';
 
 async function all(configDir: string, folder: string): Promise<Event[]> {
   const out: Event[] = [];
@@ -347,4 +347,36 @@ test("a prompt queued while the agent works is the user's words, given mid-turn;
     queued('<task-notification>done</task-notification>', 'task-notification', 'task-notification')]);
   assert.deepEqual((await all(s.configDir, repo)).filter((e) => e.kind === 'prompt'),
     [prompt('ok, deploy it once the tests pass', '1', 'user', false)]);
+});
+
+const own = 'You are an interactive agent that helps users with software engineering tasks.';
+const launcher = (text: string) => `You were started by an automation.\nInstructions from the user who set up this automation:`
+  + `\n<user-instructions>\n${text}\n</user-instructions>`;
+
+test("the instructions in a <user-instructions> block of the system prompt are the user's words, for the session", async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  writeSession(s.configDir, repo, 'a', [at('1', user('fix the flaky test')),
+    at('2', snapshot([own, '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', launcher('  when done, move the task to testing  ')]))]);
+  assert.deepEqual((await all(s.configDir, repo)).filter((e) => e.kind === 'prompt'), [prompt('fix the flaky test', '1'),
+    { ...prompt('when done, move the task to testing', '2', 'user', false), session: true }]);
+});
+
+test('two blocks are joined by a line break; an empty block, or none, gives nothing', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  writeSession(s.configDir, repo, 'a', [at('1', snapshot([own, launcher('commit when green'), launcher('then push')])),
+    at('2', snapshot([own, launcher(' \n ')])), at('3', snapshot([own, 'WebSearch takes a mode.']))]);
+  assert.deepEqual((await all(s.configDir, repo)).filter((e) => e.kind === 'prompt'),
+    [{ ...prompt('commit when green\nthen push', '1', 'user', false), session: true }]);
+});
+
+test('a snapshot line without the tag is never parsed', async () => {
+  const s = sandbox();
+  const repo = join(s.root, 'repo');
+  // Parsed, these 14 of 22 lines would fail, and the file would be unrecognized.
+  const broken = '{"type":"attachment","attachment":{"type":"prompt_snapshot","systemPrompt":["x"]} broken}';
+  writeSession(s.configDir, repo, 'a', [...Array.from({ length: 8 }, (_, i) => assistant({ id: `m${i}`, text: 'ok' })),
+    ...lines(14, broken)]);
+  assert.deepEqual(await unrecognized(s.configDir, repo), []);
 });
