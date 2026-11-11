@@ -8,30 +8,40 @@ disk and tells you which rules were kept, which were broken, when and where.
 ```text
 $ npx heeded
 
-  ~/repos/app · 76 sessions, 412 subagents · oct 11 – nov 10
-  3 files · 41 rules · 12 checked · 29 need a judge
+  ~/Documents/repos/heeded · 6 sessions, 10 subagents · nov 10 – nov 11
+  3 files · 57 rules · 8 checked · 47 need a judge · 2 set aside
 
   CLAUDE.md
-    ✗ :30  failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
-        nov 7   4d2e9a10  call Edit: src/parser.ts
-    ✗ :12  never git add -A    kept 95% of 214            broken 9×    last 2 days ago
-        nov 8   19df6c20  git add -A && git commit -m "fix: …"
-        nov 2   8c0e8fab  git add -A
-    ✓ :14  never force-push    kept 100% of 61
-    ○ :21  use pnpm, not npm   never applied              ~40 tokens every session
+    ✗ :50  commit message format                     kept 66% of 3 judged       broken 1×  last today  17 to judge
+        nov 11  89d2cc11  docs: handoff, 0.3.0 on npm, v0.3.0 tagged Co-Authored-By
+    ✓ :38  english everywhere                        kept 100% of 5 judged      15 to judge
+    ✓ :30  lowercase everywhere                      kept 100% of 3 judged      17 to judge
+    ✓ :32  plain voice, no exclamation marks         kept 100% of 2 judged      18 to judge
+    ✓ :47  self-standing comments                    kept 100% of 2 judged      18 to judge
+    ✓ :33  real examples in code blocks              kept 100% of 1 judged      19 to judge
+    ✓ :42  tests never touch real agent data         kept 100% of 1 judged      19 to judge
+    ○ :15  no runtime deps without justification     never applied              ~15 tokens every session
+    ○ :20  never modify user data                    never applied              ~17 tokens every session
+  CLAUDE.local.md
+    ✗ :49  No broad searches (find ~, mdfind)        kept 66% of 3              broken 1×  last today
+        nov 11  89d2cc11  find ~/.codex/sessions -name '*.jsonl' 2>/dev/null
+    ✓ :24  Reply in Italian                          kept 100% of 220
+        after compaction kept 100% of 113
+    ✓ :56  Never git add -A                          kept 100% of 126
+        after compaction kept 100% of 77
+    …
   ~/.claude/CLAUDE.md
-    ✗ :3   answer in italian   kept 96% of 3,812          broken 152×  last today
-        after compaction kept 69% of 410
-    ○ :17  ask before deploys  never applied in 8 judged  ~30 tokens every session
+    ○ :39  valori variabili solo se richiesti        never applied              ~14 tokens every session
+    …
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
-                             98%        97%        91%     84%
+                            100%        99%       100%     98%
 
-  6 rules no call or reply shows: heeded rules
-  up to date: new sessions and changes to instruction files are read on the next run
+  2 rules no call or reply shows, 2 set aside: heeded rules
+  403 cases waiting for the judge, ~520k tokens: heeded judges ~150k a run, heeded --all all of them
 ```
 
-<sub>a sketch: the numbers are invented.</sub>
+<sub>heeded on its own repository, after its first run. `…` marks rows left out of the two personal files.</sub>
 
 | mark | the rule |
 | --- | --- |
@@ -40,18 +50,18 @@ $ npx heeded
 | `?` | has candidates only: a pattern flagged them, the judge hasn't looked yet |
 | `○` | never applied in these sessions: it sits in every session's context all the same |
 
-- `kept 95% of 214`: the rule applied 214 times and was kept in 95% of them.
-- `of 20 judged`: no pattern can decide the rule, so the judge read a sample of its cases: 20 of them applied.
-  `17 to judge`, `2 to confirm`: cases still waiting for the judge, which can change the row on the next run.
+- `kept 100% of 126`: the rule applied 126 times and was kept every time.
+- `of 5 judged`: no pattern can decide the rule, so the judge read a sample of its cases: 5 of them applied.
+  `15 to judge`, `2 to confirm`: cases still waiting for the judge, which can change the row on the next run.
 - `after compaction`: the same rule, counted only after claude code compacted the context.
 - each rule is under the file it is written in: the folder's files first, then the others (`~/.claude/CLAUDE.md` is
   loaded in every project, so a rule there can be never applied here and needed elsewhere).
-- `:12`: the line the rule starts on in that file, as the file is now. no number: its words aren't in the file any
+- `:50`: the line the rule starts on in that file, as the file is now. no number: its words aren't in the file any
   more.
 - `kept by context depth`: every rule together, by how full the context was at the time.
 - `never applied in 8 judged`: none of the 8 cases the judge read was about the rule.
 - `rules no call or reply shows`: rules about how to work ("plan before coding"), which no single call or reply can
-  show; `heeded rules` lists them.
+  show. `set aside`: rules whose check failed its own examples. `heeded rules` lists both.
 
 ## use
 
@@ -68,7 +78,7 @@ needs node 22 or later and claude code, signed in: heeded calls your own `claude
    estimate and asks before spending anything:
 
    ```text
-   11 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~175k tokens
+   13 rule sections to read, then cases to judge · claude sonnet and haiku · up to ~190k tokens
    go ahead? enter shows the report as it is, without spending [y/N]
    ```
 
