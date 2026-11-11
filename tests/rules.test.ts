@@ -142,6 +142,19 @@ test("a sequence rule is set aside, with the reason, when its check can't be use
   assert.equal(reason({ ...buildThen, keeping: buildThen.breaking }), 'failed its examples: its keeping calls break it');
 });
 
+test("a rule's examples written inside its check are read where they belong", () => {
+  const inside = { quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment', trigger: 'committing',
+    check: { field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' },
+      keeping: [{ tool: 'Bash', value: 'git commit -m x' }] } };
+  const r = verify(inside, sections('- commit only when asked')[0])!;
+  assert.equal(r.noCases, undefined);
+  assert.deepEqual(r.keeping, [{ tool: 'Bash', value: 'git commit -m x' }]);
+  assert.equal((r.check as Record<string, unknown>).keeping, undefined);
+  const tool = { ...gitAdd, breaking: undefined, keeping: undefined,
+    check: { ...gitAdd.check, breaking: gitAdd.breaking, keeping: gitAdd.keeping } };
+  assert.equal(verify(tool, section)!.demoted, undefined);
+});
+
 test('a tool rule whose pattern is refused is demoted, with the reason', () => {
   assert.equal(verify({ ...gitAdd, check: { ...gitAdd.check, broken: { value: '(a+)+' } } }, section)!.demoted,
     'regex may take exponential time: (a+)+');

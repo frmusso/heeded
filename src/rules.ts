@@ -120,7 +120,11 @@ export function verify(raw: unknown, section: Section): Rule | null {
   const at = text.indexOf(collapse(r.quote));
   const [from, to] = [Math.max(0, at - 500), Math.min(text.length, at + collapse(r.quote).length + 1000)];
   const context = `${from ? '…' : ''}${text.slice(from, to)}${to < text.length ? '…' : ''}`;
-  const rule: Rule = { ...(r as unknown as Rule), id, name, heading, context };
+  // The model sometimes writes a rule's examples inside its check: they are read where they belong.
+  const { breaking, keeping, ...check } = (r.check ?? {}) as Record<string, unknown>;
+  const examples = { breaking: r.breaking ?? breaking, keeping: r.keeping ?? keeping };
+  const rule: Rule = { ...(r as unknown as Rule), ...(r.check ? { check } : {}),
+    ...Object.fromEntries(Object.entries(examples).filter(([, v]) => v !== undefined)), id, name, heading, context };
   if (rule.kind === 'judgment') {
     // What breaks a judgment rule is for the judge to say: its check only finds the cases.
     const { broken: _, ...check } = rule.check ?? {};
