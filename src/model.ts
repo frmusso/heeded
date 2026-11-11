@@ -24,7 +24,8 @@ export function batches<T>(items: T[], size: (item: T) => number, limit: number)
  * processes, not dozens. */
 const CALLS = 3;
 
-/** Runs `work` on each item, in order, at most 3 at once; after `stop()`, no other item starts. */
+/** Runs `work` on each item, in order, at most 3 at once; after `stop()`, or once an item throws, no other item
+ * starts. */
 export async function pool<T>(items: T[], work: (item: T, i: number, stop: () => void) => Promise<void>): Promise<void> {
   let next = 0;
   let stopped = false;
@@ -32,7 +33,12 @@ export async function pool<T>(items: T[], work: (item: T, i: number, stop: () =>
   const lane = async () => {
     while (!stopped && next < items.length) {
       const i = next++;
-      await work(items[i], i, stop);
+      try {
+        await work(items[i], i, stop);
+      } catch (e) {
+        stop();
+        throw e;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CALLS, items.length) }, lane));
