@@ -176,6 +176,7 @@ test('the prompt gives cases to every rule a call or reply can show: what is wri
   const stdin = calls()[0].stdin.replace(/\s+/g, ' ');
   for (const words of ['however many they are', 'the Edit and Write calls on the files it is about', 'the judge reads what each one writes',
     'git commit commands with a message', 'the calls that run it', 'never a call that only keeps the rule',
+    'always with keeping', 'A check without them is not used',
     'Leave the check out only when no call or reply can show the rule', 'the order of the work']) {
     assert.ok(stdin.includes(words), words);
   }

@@ -225,8 +225,10 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
         }
         const rules = (raw ?? []).map((r) => verify(r, section)).filter((r) => r !== null);
         for (const rule of rules) found.rules.push({ ...rule, file: file.path });
-        // Rules from before stand for it only when some of their words are still written in it.
-        found.versions.push({ section, identity: id, read, readAt: known?.at ?? null, before: !read && rules.length > 0 });
+        // Read before: found to hold no rule, or with rules whose words are still written in it. Rules none of which is
+        // still there stand for nothing: it is as never read.
+        const before = !read && raw !== null && (raw.length === 0 || rules.length > 0);
+        found.versions.push({ section, identity: id, read, readAt: known?.at ?? null, before });
       }
       byContent.set(file.content, found);
     }
@@ -333,14 +335,14 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
 
 A "judgment" rule has a check that finds the cases a judge will read whenever some calls or replies can show it kept
 or broken, however many they are: { "reply": true } for a rule about what the agent tells the user; else the calls it
-is about, as a tool rule's "field" and "when", without "broken".
+is about, as a tool rule's "field" and "when", without "broken", and always with keeping: one or two calls that are
+cases of the rule, each matched by "when", never a call that only keeps the rule without being one of its cases (a
+read of a file the rule forbids editing). A check without them is not used.
 - A rule about what the agent writes in files (code, comments, tests, docs, their language or their style) has as
   cases the Edit and Write calls on the files it is about ("field": "file_path"; left out for any file): the judge
   reads what each one writes.
 - A rule about commit messages has the git commit commands with a message ("data": "\S" in "when").
 - A rule about a command, a setting or a tool has the calls that run it.
-- keeping: one or two calls that are cases of the rule, each matched by "when": never a call that only keeps the rule
-  without being one of its cases (a read of a file the rule forbids editing).
 Leave the check out only when no call or reply can show the rule: how to plan, what to remember, the order of the
 work.
 `;

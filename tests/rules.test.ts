@@ -303,6 +303,14 @@ test('a version read under this prompt stands for a section before the same text
   assert.deepEqual(found.rules.map((r) => r.quote), ['never `git add -A`']);
 });
 
+test('a section read under the previous prompt and found to hold no rule is one to read again, not one never read', () => {
+  const s = sandbox();
+  const [later] = sections(v2);
+  save(s.cacheDir, sectionHash(later.path, later.text, PROMPT_VERSION - 1), []);
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: later.text })!;
+  assert.deepEqual([found.rules, found.versions.map((v) => v.before)], [[], [true]]);
+});
+
 test('rules from before that no longer appear in the section stand for nothing: it is not read yet', () => {
   const s = sandbox();
   const [earlier] = sections(v1);
