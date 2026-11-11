@@ -114,11 +114,13 @@ function shorten(line: string): string {
 
 /**
  * The excerpts of a stream of events: `push` takes every event in order; `of` gives the excerpt of a call or reply not
- * pushed yet, which ends with it. An excerpt is the user's prompts before the turn, then the prompt that started it,
- * then the events since, one per line, at most 6,000 characters: when over, the events nearest the case stay, then the
- * prompts before the turn, then the user's words in it; a line `…` stands for the events left out.
+ * pushed yet, which ends with it. An excerpt is the instructions the user set for the session, the user's prompts
+ * before the turn, then the prompt that started it, then the events since, one per line, at most 6,000 characters: when
+ * over, the events nearest the case stay, then the prompts before the turn, then the user's words in it; a line `…`
+ * stands for the events left out. The session's instructions, the turn's prompt and the case are always kept.
  */
 export function excerpts() {
+  let session: string | null = null;
   let earlier: string[] = [];
   let start: string | null = null;
   // The lines since the start, oldest first, each kind bounded by what an excerpt can hold.
@@ -139,8 +141,11 @@ export function excerpts() {
     push(e: Event) {
       memo = null;
       if (e.kind === 'transcript') {
+        session = null;
         earlier = [];
         restart(null);
+      } else if (e.kind === 'prompt' && e.session) {
+        session = words(e);
       } else if (e.kind === 'prompt' && e.starts) {
         if (start !== null) earlier = [...earlier, shorten(start)].slice(-EARLIER);
         restart(words(e));
@@ -169,8 +174,9 @@ export function excerpts() {
       if (memo?.e === e) return memo.result;
       const [prefix, raw] = parts(e);
       const caseHead = head(raw, WORDS);
-      let size = earlier.reduce((n, l) => n + l.length + 1, 0) + (start === null ? 0 : start.length + 1) + sizes[0] + sizes[1]
-        + prefix.length + Math.min(caseHead.length, WORDS) + (dropped ? 2 : 0);
+      const kept = [session, start].filter((l) => l !== null);
+      let size = earlier.reduce((n, l) => n + l.length + 1, 0) + kept.reduce((n, l) => n + l.length + 1, 0) + sizes[0]
+        + sizes[1] + prefix.length + Math.min(caseHead.length, WORDS) + (dropped ? 2 : 0);
       if (size > WHOLE && !dropped) size += 2;
       // Left out, oldest first: the other lines since the start, then the prompts before it, then the user's words since.
       const drop = new Set<number>();
@@ -185,8 +191,8 @@ export function excerpts() {
       let first = 0;
       for (; first < earlier.length && size > WHOLE; first++) size -= earlier[first].length + 1;
       leave(true);
-      const lines = [...earlier.slice(first), ...(start === null ? [] : [start]), ...(dropped || drop.size ? ['…'] : []),
-        ...since.filter((_, i) => !drop.has(i)).map((l) => l.text)];
+      const lines = [...(session === null ? [] : [session]), ...earlier.slice(first), ...(start === null ? [] : [start]),
+        ...(dropped || drop.size ? ['…'] : []), ...since.filter((_, i) => !drop.has(i)).map((l) => l.text)];
       const hash = createHash('sha256').update(`${JUDGE_VERSION}\0${JUDGE_MODEL}`);
       for (const l of lines) hash.update('\n').update(l);
       hash.update('\n').update(prefix).update(caseHead);

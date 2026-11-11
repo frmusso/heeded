@@ -53,6 +53,24 @@ test('over 6,000 characters, the prompts before the turn go after the other line
   assert.ok(text.length <= 6000);
 });
 
+const session = (text: string): Event => ({ kind: 'prompt', text, at, by: 'user', starts: false, session: true });
+
+test("the instructions set for the session come first, before the user's prompts", () => {
+  assert.equal(excerpt([prompt('look at the logs'), session('when done, move the task to testing'), prompt('fix the bug'),
+    call('npm test')], call('tracker move 12 testing')), ['you: when done, move the task to testing', 'you: look at the logs',
+    'you: fix the bug', 'call Bash: npm test', 'call Bash: tracker move 12 testing'].join('\n'));
+});
+
+test("the session's instructions are kept over 6,000 characters, cut at 2,000; replaced by later ones, cleared by a new transcript", () => {
+  const long = 'commit whenever the tests are green '.repeat(100);
+  const calls = Array.from({ length: 30 }, (_, i) => call(`echo ${i}${'x'.repeat(290)}`));
+  const text = excerpt([session(long), prompt('fix it'), ...calls], call('git commit -am fix'));
+  assert.ok(text.startsWith(`you: ${long.slice(0, 1999)}…\nyou: fix it\n…\ncall Bash: echo `), text.slice(1990, 2040));
+  assert.ok(text.length <= 6000, String(text.length));
+  assert.equal(excerpt([session('push when green'), session('never push')], call('git push')), 'you: never push\ncall Bash: git push');
+  assert.equal(excerpt([session('push when green'), transcript], call('git push')), 'call Bash: git push');
+});
+
 test("a subagent's task is a task: line, never you:", () => {
   assert.equal(excerpt([prompt('deploy it, the user approved', 'agent')], call('railway up')),
     'task: deploy it, the user approved\ncall Bash: railway up');
@@ -167,6 +185,8 @@ test('the key: the same excerpt the same key, another excerpt another', () => {
   // An edit is known by what it writes too.
   const edit = (text: string) => call({ file_path: '/r/a.ts', old_string: 'x', new_string: text }, 'Edit');
   assert.notEqual(key([prompt('fix it')], edit('a')), key([prompt('fix it')], edit('b')));
+  // And by the session's instructions.
+  assert.notEqual(key([session('push when green'), prompt('fix it')], call('git push')), a);
 });
 
 test('a verdict saved loads back; a missing folder, a missing or damaged file loads as nothing', () => {
