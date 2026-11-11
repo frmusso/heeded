@@ -292,11 +292,13 @@ test("a rule comes from its file, then its headings: a scoped rule is told by wh
   assert.ok(calls()[0].stdin.includes('<rule id="1" from="~/repos/app/web/CLAUDE.md › CLAUDE.md › TypeScript">'), calls()[0].stdin);
 });
 
-test('cases go in batches of at most 40,000 characters; tokens are summed over the calls', async () => {
+test('cases go in batches of at most 40,000 characters; tokens are summed over the calls; each call is told as it starts', async () => {
   const { s, env, calls } = claude([{ stdout: answer([], [4000, 100, 0, 200]) }, { stdout: answer([], [4000, 0, 50, 300]) }]);
   const big = () => kase(commit, `you: x\ncall Bash: ${'y'.repeat(15_000)}`);
-  const result = await judge([big(), big(), big()], env, s.cacheDir);
+  const told: number[][] = [];
+  const result = await judge([big(), big(), big()], env, s.cacheDir, (n, of) => told.push([n, of, calls().length]));
   assert.equal(calls().length, 2);
+  assert.deepEqual(told, [[1, 2, 0], [2, 2, 1]]);
   assert.equal(calls()[0].stdin.match(/<case id=/g).length, 2);
   assert.equal(result.tokens, 8650);
 });

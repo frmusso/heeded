@@ -74,7 +74,7 @@ test('claude not on the PATH: one error, nothing read, no other call tried', asy
   assert.deepEqual(result, { read: 0, tokens: 0, errors: ['claude not found. install claude code, or run heeded where claude runs.'] });
 });
 
-test('a call that fails or answers out of shape: an error, nothing read for its batch; the other batches still read', async () => {
+test('a call that fails or answers out of shape: an error, nothing read for its batch; the other batches still read; each call is told as it starts', async () => {
   const { s, env, calls } = claude([
     { exit: 1, stderr: 'Error: rate limited\nretry later\n' },
     { stdout: JSON.stringify({ type: 'result', is_error: true, result: 'nope' }) },
@@ -82,8 +82,11 @@ test('a call that fails or answers out of shape: an error, nothing read for its 
     { stdout: 'not json' },
     { stdout: answer([{ id: '1', rules: [] }]) },
   ]);
-  const result = await extract(pending(...['a', 'b', 'c', 'd', 'e'].map((x) => section(x.repeat(20_000), `h${x}`))), env, s.cacheDir);
+  const told: number[][] = [];
+  const result = await extract(pending(...['a', 'b', 'c', 'd', 'e'].map((x) => section(x.repeat(20_000), `h${x}`))), env, s.cacheDir,
+    (n, of) => told.push([n, of]));
   assert.equal(calls().length, 5);
+  assert.deepEqual(told, [[1, 5], [2, 5], [3, 5], [4, 5], [5, 5]]);
   const shape = "claude's answer didn't match the schema";
   assert.deepEqual(result.errors, ['claude exited with code 1: Error: rate limited', 'claude: nope', shape, shape]);
   assert.equal(result.read, 1);

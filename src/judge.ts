@@ -322,14 +322,18 @@ export function select(tool: Case[][], judgment: Case[][], budget: number): Case
  * Judges cases through the user's own claude, one call per batch, and caches each verdict as its batch comes: a run
  * stopped midway keeps what it paid for. Only the rules and the excerpts leave the machine, secrets redacted. A verdict
  * whose quote isn't in its case's excerpt is `none`, never a violation; a case the answer leaves out is judged again
- * next time. `model` is a parameter for measuring others.
+ * next time. `onCall` hears of each call as it starts: its number, of how many. `model` is a parameter for measuring
+ * others.
  */
-export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: string, model = JUDGE_MODEL):
+export async function judge(cases: Case[], env: NodeJS.ProcessEnv, cacheDir: string,
+  onCall?: (n: number, of: number) => void, model = JUDGE_MODEL):
   Promise<{ judged: number; tokens: number; errors: string[] }> {
   const errors: string[] = [];
   let judged = 0;
   let tokens = 0;
-  for (const { batch, prompt } of prompts(cases, env.HOME)) {
+  const all = prompts(cases, env.HOME);
+  for (const [i, { batch, prompt }] of all.entries()) {
+    onCall?.(i + 1, all.length);
     const run = await ask(model, JUDGE_SCHEMA, prompt, env);
     tokens += run.tokens;
     if (run.error) {

@@ -78,18 +78,19 @@ function setup({ session = true, claude = true, cached = false, replies = [answe
     { terminal = false, reply = 'y' as string | Error, columns = undefined as number | undefined, env = {} } = {}) => {
     let out = '';
     let err = '';
+    const shown: string[] = [];
     const asked: string[] = [];
     const code = await main(args, {
       env: { ...s.env, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_REPLY: JSON.stringify(replies.map((stdout) => ({ stdout }))), ...env },
       cwd: repo,
-      terminal, columns, out: (x) => (out += x), err: (x) => (err += x),
+      terminal, columns, out: (x) => (out += x), err: (x) => (err += x), status: (x) => shown.push(x),
       ask: async (q) => {
         asked.push(q);
         if (reply instanceof Error) throw reply;
         return reply;
       },
     });
-    return { code, out, err, asked };
+    return { code, out, err, shown, asked };
   };
   /** The judge's part, for tests about the report: every candidate waiting is confirmed broken. */
   const confirm = async () => {
@@ -159,6 +160,15 @@ test('sections to read and cases: one question with the ceiling, then read, judg
   assert.ok(existsSync(join(s.cacheDir, 'heeded', `${sections(content)[0].hash}.json`)));
   assert.match(out, /✗ never git add -A/);
   assert.doesNotMatch(out, /not read yet/);
+});
+
+test('while it reads and judges, a status line says what it waits for and since when, then clears', async () => {
+  const { heeded } = setup({ replies: [answer, confirmed] });
+  const { shown } = await heeded([], { terminal: true, reply: 'y' });
+  // Every second the line is shown again with the time so far: a slow machine may add a repeat.
+  const lines = shown.map((l) => l.replace(/ · \d+:\d\d$/, ' · m:ss')).filter((l, i, all) => l !== all[i - 1]);
+  assert.deepEqual(lines, ['reading 1 rule section · call 1 of 1 · m:ss', '', 'judging 1 case · call 1 of 1 · m:ss', '']);
+  assert.match(shown[0], / · 0:00$/);
 });
 
 test('a terminal, and no: nothing read or judged, nothing spent', async () => {

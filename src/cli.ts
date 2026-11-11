@@ -35,6 +35,8 @@ interface IO {
   ask: (question: string) => Promise<string>;
   out: (s: string) => void;
   err: (s: string) => void;
+  /** Shows a line on the terminal in place of the one shown last; an empty line clears it. */
+  status: (line: string) => void;
 }
 
 /** One pass over the folder's transcripts with the rules and verdicts cached so far: the report, the sections to read,
@@ -49,6 +51,26 @@ async function scan(configDir: string, folder: string, cacheDir: string):
 
 const thousands = (n: number) => n.toLocaleString('en-US');
 const plural = (n: number, word: string) => `${thousands(n)} ${word}${n === 1 ? '' : 's'}`;
+const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+/** Runs a step that calls claude, with a status line meanwhile: what it does, the call it waits for, the time so far,
+ * shown again every second. A call takes up to a minute or two: without it the run looks stuck. */
+async function step<T>(io: IO, doing: string, work: (onCall: (n: number, of: number) => void) => Promise<T>):
+  Promise<T> {
+  const start = Date.now();
+  let call = '';
+  const show = () => io.status(`${doing}${call} · ${clock(Date.now() - start)}`);
+  const timer = setInterval(show, 1000);
+  try {
+    return await work((n, of) => {
+      call = ` · call ${n} of ${of}`;
+      show();
+    });
+  } finally {
+    clearInterval(timer);
+    io.status('');
+  }
+}
 
 /** Runs heeded; resolves to the exit code: 0 done (violations included), 1 an error, 2 wrong usage. */
 export async function main(argv: string[], io: IO): Promise<number> {
@@ -114,7 +136,8 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
     if (/^y(es)?$/i.test(answer.trim())) {
       let judging = true;
       if (distinct.length) {
-        const found = await extract(pending, io.env, cacheDir);
+        const found = await step(io, `reading ${plural(distinct.length, 'rule section')}`,
+          (onCall) => extract(pending, io.env, cacheDir, onCall));
         if (found.read) io.err(`read ${plural(found.read, 'section')} · ${thousands(found.tokens)} tokens\n`);
         failed(found.errors);
         // The rules just read have cases of their own, chosen with the others.
@@ -124,7 +147,8 @@ async function run(command: string | undefined, asJson: boolean, io: IO): Promis
         } else judging = false;
       }
       if (judging && picked.length) {
-        const done = await judge(picked, io.env, cacheDir);
+        const done = await step(io, `judging ${plural(picked.length, 'case')}`,
+          (onCall) => judge(picked, io.env, cacheDir, onCall));
         if (done.judged) io.err(`judged ${plural(done.judged, 'case')} · ${thousands(done.tokens)} tokens\n`);
         failed(done.errors);
         if (done.judged) ({ report } = await scan(configDir, io.cwd, cacheDir));
@@ -153,5 +177,6 @@ if (process.argv[1] && realpathSync(process.argv[1]) === import.meta.filename) {
     env: process.env, cwd: process.cwd(), terminal: Boolean(process.stdin.isTTY && process.stderr.isTTY),
     columns: process.stdout.isTTY ? process.stdout.columns : undefined, ask,
     out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s),
+    status: (line) => process.stderr.write(`\r\x1b[K${line}`),
   });
 }
