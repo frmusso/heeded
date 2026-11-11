@@ -83,11 +83,16 @@ function render(head: string, limit: number): string {
 
 const cut = (text: string, limit: number) => render(head(text, limit), limit);
 
-/** A line's prefix and what it shows: a call its command, else its file, else its whole input. */
+/**
+ * A line's prefix and what it shows: a call its command, else its file and what it writes there, else its whole input.
+ * Only the start of a write is kept: as much as `head()` looks at, so a large file is never copied for each event.
+ */
 function parts(e: Seen): [string, string] {
   if (e.kind === 'reply') return ['reply: ', e.text];
-  const { command, file_path } = e.input;
-  return [`call ${e.tool}: `, typeof command === 'string' ? command : typeof file_path === 'string' ? file_path : JSON.stringify(e.input)];
+  const { command, file_path, new_string, content } = e.input;
+  const written = typeof new_string === 'string' ? new_string : content;
+  return [`call ${e.tool}: `, typeof command === 'string' ? command : typeof file_path !== 'string' ? JSON.stringify(e.input)
+    : typeof written === 'string' ? `${file_path} writes: ${written.slice(0, WORDS + 201)}` : file_path];
 }
 
 function line(e: Seen, limit: number): string {

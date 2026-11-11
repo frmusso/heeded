@@ -75,9 +75,34 @@ test('an excerpt read from a transcript: what the agent said comes before the ca
     'you: clean up the build folder\nreply: I will delete dist/ now, as you asked.\ncall Bash: rm -rf dist\ncall Bash: npm run build']);
 });
 
-test('a call shows its command, else its file, else its input', () => {
+test('a call shows its command, else its file and what it writes, else its input', () => {
+  assert.equal(excerpt([], call({ file_path: '/r/a.ts', old_string: 'x', new_string: 'const y = 2;\nexport { y };' }, 'Edit')),
+    'call Edit: /r/a.ts writes: const y = 2; export { y };');
+  assert.equal(excerpt([], call({ file_path: '/r/a.md', content: '# notes\n\nfirst line' }, 'Write')),
+    'call Write: /r/a.md writes: # notes first line');
+  assert.equal(excerpt([], call({ file_path: '/r/a.ts', offset: 10 }, 'Read')), 'call Read: /r/a.ts');
   assert.equal(excerpt([], call({ file_path: '/r/a.ts', old_string: 'x' }, 'Edit')), 'call Edit: /r/a.ts');
   assert.equal(excerpt([], call({ q: 1 }, 'mcp__x__y')), 'call mcp__x__y: {"q":1}');
+});
+
+test("an edit's line is cut as any line: 300 before the case, 2,000 on the case, its file first", () => {
+  const long = 'word '.repeat(1000);
+  const lines = excerpt([call({ file_path: '/r/a.ts', new_string: long }, 'Edit')],
+    call({ file_path: '/r/b.ts', content: long }, 'Write')).split('\n');
+  assert.deepEqual(lines.map((l) => l.length), ['call Edit: '.length + 300, 'call Write: '.length + 2000]);
+  assert.ok(lines[0].startsWith('call Edit: /r/a.ts writes: word word'), lines[0].slice(0, 40));
+  assert.ok(lines[1].startsWith('call Write: /r/b.ts writes: word word'), lines[1].slice(0, 40));
+  for (const l of lines) assert.ok(l.endsWith('…'), l.slice(-10));
+});
+
+test('a secret an edit writes is redacted', () => {
+  // Built from pieces so secret scanners don't take the fixture for a real one.
+  const key = 'sk' + '-ant-api03-Zx9_Qw8-Er7Ty6Ui5Op4';
+  const text = excerpt([call({ file_path: '/r/.env', content: `API_KEY=${key}\nPORT=3000` }, 'Write')],
+    call({ file_path: '/r/.env', old_string: 'PORT=3000', new_string: `KEY=${key}\nPORT=3000` }, 'Edit'));
+  assert.ok(!text.includes('Zx9_Qw8'), text);
+  assert.ok(text.includes('PORT=3000'), text);
+  assert.equal(text.split('\n').length, 2);
 });
 
 test("lines are cut: 300 for calls and replies, 2,000 for the user's words and the case", () => {
@@ -139,6 +164,9 @@ test('the key: the same excerpt the same key, another excerpt another', () => {
   assert.match(a, /^[0-9a-f]{64}$/);
   assert.equal(key([prompt('fix it')], call('git push')), a);
   assert.notEqual(key([prompt('fix it, then push')], call('git push')), a);
+  // An edit is known by what it writes too.
+  const edit = (text: string) => call({ file_path: '/r/a.ts', old_string: 'x', new_string: text }, 'Edit');
+  assert.notEqual(key([prompt('fix it')], edit('a')), key([prompt('fix it')], edit('b')));
 });
 
 test('a verdict saved loads back; a missing folder, a missing or damaged file loads as nothing', () => {
