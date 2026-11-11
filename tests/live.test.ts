@@ -55,11 +55,19 @@ test('the extraction lists every rule, and gives cases to rules about what is wr
   }
 });
 
-test('the judge on the labelled set: no false broken, recall 80% or more', { skip }, async (t) => {
+test('the judge on the labelled set, two other rules on each excerpt: no false broken, recall 80% or more', { skip },
+  async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));
   try {
     const list = cases();
-    const result = await judge(list, process.env, dir);
+    // A real excerpt is a case of several rules at once: each carries two other rules of the set, not scored.
+    const rules = [...new Map(list.map((k) => [k.rule.id, k.rule])).values()];
+    const others = list.flatMap((k, i) => {
+      const rest = rules.filter((r) => r.id !== k.rule.id);
+      return [rest[i % rest.length], rest[(i + 1) % rest.length]]
+        .map((rule) => ({ ...k, id: `${rule.id}-${k.id.slice(k.rule.id.length + 1)}`, rule }));
+    });
+    const result = await judge([...list, ...others], process.env, dir);
     const of = verdicts(dir);
     const said = list.map((k) => of(k.rule.id, k.id.slice(k.rule.id.length + 1))?.verdict);
     const broken = LABELLED.map((l, i) => [l.expected === 'broken', said[i] === 'broken']);
@@ -68,7 +76,7 @@ test('the judge on the labelled set: no false broken, recall 80% or more', { ski
     const precision = given ? found / given : 1; // no broken given: none false
     const recall = found / broken.filter(([expected]) => expected).length;
     t.diagnostic(`precision on broken ${precision.toFixed(2)} · recall ${recall.toFixed(2)} · ${result.tokens} tokens`
-      + ` (estimate ${estimate(list).tokens})`);
+      + ` (estimate ${estimate([...list, ...others]).tokens})`);
     for (const [i, l] of LABELLED.entries()) {
       const [first, ...rest] = l.excerpt.split('\n');
       if (said[i] !== l.expected) t.diagnostic(`case ${i + 1}, ${l.expected} judged ${said[i]}: ${first} … ${rest.at(-1)}`);

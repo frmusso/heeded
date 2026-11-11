@@ -105,9 +105,11 @@ to type `heeded` instead of `npx heeded`, install it: `npm install -g heeded`.
    a shell command is read the way a shell reads it, so `echo "rm -rf"` isn't running `rm`.
 4. **judge.** a pattern finds candidates, not violations. each candidate, and a sample of the cases no pattern can
    decide, goes to `claude` (haiku) with an excerpt of its session: your prompt, what the agent did since, the call
-   itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. each
-   verdict is cached. a rule the judge decides is tried on 8 of its cases first: if none is about it, it stops there;
-   if some are, it goes on to 20 cases that applied, or 40 judged. up to 3 calls run at once.
+   itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. an
+   excerpt goes once, with every rule it is a case of (an edit of a component is a case of every rule about
+   components), and each verdict is cached. a rule the judge decides is tried on 8 of its cases first: if none is
+   about it, it stops there; if some are, it goes on to 20 cases that applied, or 40 judged. up to 3 calls run at
+   once.
 5. **report.** each rule under its file, at its line in the file as it is now: kept, broken with the evidence, never
    applied; by context depth and after compaction.
 
