@@ -527,9 +527,11 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           sum[i].broken += c.broken;
         });
       }
-      // Sections by their text: a worktree's copy of a file is one section to read.
-      const sections = (before: boolean) => new Set(unread().filter((v) => v.before === before).map((v) => v.section.hash)).size;
-      return { from, to, sessions, subagents, files: [...files], notRead: sections(false), toReread: sections(true),
+      // Sections by their text: a worktree's copy of a file is one section to read. A text with rules from before under
+      // one of its paths is one to read again, not also one never read.
+      const reread = new Set(unread().filter((v) => v.before).map((v) => v.section.hash));
+      const never = new Set(unread().filter((v) => !reread.has(v.section.hash)).map((v) => v.section.hash));
+      return { from, to, sessions, subagents, files: [...files], notRead: never.size, toReread: reread.size,
         toJudge: rules.reduce((n, r) => n + r.toJudge, 0), atMost: [...tallies.values()].reduce((n, t) => n + most(t), 0),
         rules, byDepth: buckets(sum) };
     },

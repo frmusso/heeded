@@ -351,6 +351,14 @@ function asked(events: Event[], versionsBy: Record<string, Version[]>) {
   return { pending: c.pending().map((p) => [p.section.text, p.at]), notRead: c.result().notRead };
 }
 
+test('one text to read again under one path and never read under another is one section to read again, not two', () => {
+  const c = counter((f) => ({ rules: [], versions: f.content === 'A'
+    ? [version('same', 'root', '2026-11-01T00:00:00Z')] : [version('same', 'copy')] }));
+  for (const e of [start(), files({ '/r/CLAUDE.md': 'A', '/r/w/CLAUDE.md': 'B' }), bash('ls', { at: '2026-11-02T10:00:00Z' })]) c.on(e);
+  const { notRead, toReread } = c.result();
+  assert.deepEqual([notRead, toReread], [0, 1]);
+});
+
 test('of the versions of a section not read, only the one in effect latest is asked about', () => {
   assert.deepEqual(asked([start('s1'), files({ '/r/CLAUDE.md': 'A1' }), bash('ls', { at: '2026-11-01T10:00:00Z' }),
     start('s2'), files({ '/r/CLAUDE.md': 'A2' }), bash('ls', { at: '2026-11-03T10:00:00Z' }),

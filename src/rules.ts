@@ -226,11 +226,10 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
           const older = recall(cacheDir, id, PROMPT_VERSION - 1);
           raw = load(cacheDir, sectionHash(section.path, section.text, PROMPT_VERSION - 1)) ?? (older && load(cacheDir, older.hash));
         }
-        found.versions.push({ section, identity: id, read, readAt: known?.at ?? null, before: !read && raw !== null });
-        for (const r of raw ?? []) {
-          const rule = verify(r, section);
-          if (rule) found.rules.push({ ...rule, file: file.path });
-        }
+        const rules = (raw ?? []).map((r) => verify(r, section)).filter((r) => r !== null);
+        for (const rule of rules) found.rules.push({ ...rule, file: file.path });
+        // Rules from before stand for it only when some of their words are still written in it.
+        found.versions.push({ section, identity: id, read, readAt: known?.at ?? null, before: !read && rules.length > 0 });
       }
       byContent.set(file.content, found);
     }

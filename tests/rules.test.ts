@@ -285,8 +285,30 @@ test('an edited section, read under the previous prompt in an earlier version, k
 test('two prompts back, nothing is kept: the section is read from nothing', () => {
   const s = sandbox();
   const [later] = sections(v2);
-  save(s.cacheDir, sectionHash(later.path, later.text, PROMPT_VERSION - 2), [rule('never force-push')]);
+  const old = sectionHash(later.path, later.text, PROMPT_VERSION - 2);
+  save(s.cacheDir, old, [rule('never force-push')]);
+  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), old, '2026-11-01T10:00:00Z', PROMPT_VERSION - 2);
   const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: later.text })!;
+  assert.deepEqual([found.rules, found.versions.map((v) => v.before)], [[], [false]]);
+});
+
+test('a version read under this prompt stands for a section before the same text read under the previous one', () => {
+  const s = sandbox();
+  const [earlier] = sections(v1);
+  const [later] = sections(v2);
+  save(s.cacheDir, earlier.hash, [rule('never `git add -A`'), rule('never rebase')]);
+  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), earlier.hash, '2026-11-01T10:00:00Z');
+  save(s.cacheDir, sectionHash(later.path, later.text, PROMPT_VERSION - 1), [rule('never force-push')]);
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v2 })!;
+  assert.deepEqual(found.rules.map((r) => r.quote), ['never `git add -A`']);
+});
+
+test('rules from before that no longer appear in the section stand for nothing: it is not read yet', () => {
+  const s = sandbox();
+  const [earlier] = sections(v1);
+  save(s.cacheDir, earlier.hash, [rule('never rebase')]);
+  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), earlier.hash, '2026-11-01T10:00:00Z');
+  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: v2 })!;
   assert.deepEqual([found.rules, found.versions.map((v) => v.before)], [[], [false]]);
 });
 
