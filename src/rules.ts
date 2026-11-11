@@ -9,7 +9,7 @@ import { redact } from './redact.ts';
 
 /** Part of every section's hash: a new prompt or model reads every section again. */
 /** The extraction prompt's version: part of every cache key, so a new prompt reads every section again. */
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 4;
 export const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
@@ -335,10 +335,18 @@ A "tool" rule has a check over one call: its tool name and one top-level string 
   name holding the forbidden word, a read-only form of the command (git tag alone lists tags), its --help, a search or
   an echo naming it. A value is the field's whole value: for Bash, a whole command line.
 
-A "judgment" rule has a check that finds the cases a judge will read: { "reply": true } for a rule about what the
-agent tells the user; else the calls it may be about, as a tool rule's "field" and "when", without "broken", and
-keeping: one or two calls it is about, which "when" must match. Leave the check out when no single call or reply is
-a case of the rule (how to plan, what to remember).
+A "judgment" rule has a check that finds the cases a judge will read whenever some calls or replies can show it kept
+or broken, however many they are: { "reply": true } for a rule about what the agent tells the user; else the calls it
+is about, as a tool rule's "field" and "when", without "broken".
+- A rule about what the agent writes in files (code, comments, tests, docs, their language or their style) has as
+  cases the Edit and Write calls on the files it is about ("field": "file_path"; left out for any file): the judge
+  reads what each one writes.
+- A rule about commit messages has the git commit commands with a message ("data": "\S" in "when").
+- A rule about a command, a setting or a tool has the calls that run it.
+- keeping: one or two calls that are cases of the rule, each matched by "when": never a call that only keeps the rule
+  without being one of its cases (a read of a file the rule forbids editing).
+Leave the check out only when no call or reply can show the rule: how to plan, what to remember, the order of the
+work.
 `;
 
 /**

@@ -169,6 +169,18 @@ test('the prompt asks for unconditional tool rules, whole words, near misses and
   assert.ok(!stdin.includes('\x08'));
 });
 
+test('the prompt gives cases to every rule a call or reply can show: what is written, commit messages, commands', async () => {
+  const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
+  await extract(pending(section('- comments in english')), env, s.cacheDir);
+  // Read as one line: where the prompt wraps doesn't matter.
+  const stdin = calls()[0].stdin.replace(/\s+/g, ' ');
+  for (const words of ['however many they are', 'the Edit and Write calls on the files it is about', 'the judge reads what each one writes',
+    'git commit commands with a message', 'the calls that run it', 'never a call that only keeps the rule',
+    'Leave the check out only when no call or reply can show the rule', 'the order of the work']) {
+    assert.ok(stdin.includes(words), words);
+  }
+});
+
 test('the schema lets a judgment rule find replies', async () => {
   const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
   await extract(pending(section('- say what you changed')), env, s.cacheDir);

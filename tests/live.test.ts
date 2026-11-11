@@ -33,6 +33,23 @@ test('the extraction call is isolated, and its answer verifies', { skip }, async
   }
 });
 
+test('the extraction gives cases to rules about what is written and about commit messages', { skip }, async (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));
+  try {
+    const [section] = sections('## code\n\n- write every code comment in English\n- commit messages start with a lowercase verb\n');
+    const result = await extract([{ section, identity: 'live', at: '' }], process.env, dir);
+    t.diagnostic(`${result.tokens} tokens`);
+    assert.deepEqual(result.errors, []);
+    const raw = load(dir, section.hash) ?? [];
+    const rules = raw.map((r) => verify(r, section));
+    assert.equal(rules.length, 2, JSON.stringify(raw));
+    // Each one checked, or judged on cases: none left with no case.
+    for (const r of rules) assert.ok(r && !r.demoted && !r.noCases && r.check, JSON.stringify(raw));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the judge on the labelled set: no false broken, recall 80% or more', { skip }, async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'heeded-live-')));
   try {
