@@ -31,7 +31,6 @@ $ npx heeded
         after compaction kept 100% of 77
     …
   ~/.claude/CLAUDE.md
-    ○ :39  valori variabili solo se richiesti        never applied              ~14 tokens every session
     …
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
