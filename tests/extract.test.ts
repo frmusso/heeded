@@ -184,7 +184,7 @@ test('the prompt gives cases to every rule a call or reply can show: what is wri
   }
 });
 
-test('the prompt finds sequence rules: a call before or after another, the examples a series of calls (prompt v5)', async () => {
+test('the prompt finds sequence rules: a call before or after another, the examples a series of calls (prompt v6)', async () => {
   const { s, env, calls } = claude([{ stdout: answer([{ id: '1', rules: [] }]) }]);
   await extract(pending(section('- run npm run build after changing src/')), env, s.cacheDir);
   const stdin = calls()[0].stdin.replace(/\s+/g, ' ');
@@ -203,7 +203,7 @@ test('the prompt finds sequence rules: a call before or after another, the examp
   for (const step of ['first', 'then']) {
     assert.deepEqual(Object.keys(rule.check.properties[step].properties), ['field', 'tool', 'value', 'data']);
   }
-  assert.equal(PROMPT_VERSION, 5);
+  assert.equal(PROMPT_VERSION, 6);
 });
 
 test('the schema lets a judgment rule find replies', async () => {

@@ -223,7 +223,7 @@ test("a sequence rule's then: kept when it follows before the turn ends; the one
 
 test('in one command line, the simple commands keep their order: a first before keeps, a then after keeps', () => {
   const push = (first: string) => steps({ field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+push(\\s|$)' },
-    first: { field: 'command', tool: '^Bash$', value: first } });
+    first: { field: 'command', tool: '^Bash$', ...(first ? { value: first } : {}) } });
   const log = '(^|\\s)git\\s+log(\\s|$)';
   assert.deepEqual(push(log).call('Bash', { command: 'git log --oneline origin/main..main && git push' }, 'p'), [{ item: 'p', broken: false }]);
   assert.deepEqual(push(log).call('Bash', { command: 'git push && git log --oneline origin/main..main' }, 'p'), [{ item: 'p', broken: true }]);
@@ -234,6 +234,16 @@ test('in one command line, the simple commands keep their order: a first before 
   const before = test(npm);
   assert.deepEqual(before.call('Bash', { command: 'npm test && git commit -m x' }, 'c'), []);
   assert.deepEqual(before.end(), ['c']);
+  // A then is after the call's last command the rule is about.
+  assert.deepEqual(test(npm).call('Bash', { command: 'npm test && git commit -m x && npm test' }, 'c'), [{ item: 'c', broken: false }]);
+  const last = test(npm);
+  assert.deepEqual(last.call('Bash', { command: 'git commit -m a && npm test && git commit -m b' }, 'c'), []);
+  assert.deepEqual(last.end(), ['c']);
+  // A pattern on the tool alone says nothing of the order inside a call; nor do two patterns on different fields.
+  assert.deepEqual(push('').call('Bash', { command: 'cd x && git push' }, 'p'), [{ item: 'p', broken: true }]);
+  const write = steps({ field: 'file_path', when: { tool: '^Write$', value: '/src/' },
+    first: { field: 'content', tool: '^Write$', value: 'TODO' } });
+  assert.deepEqual(write.call('Write', { file_path: '/r/src/a.ts', content: 'TODO' }, 'w'), [{ item: 'w', broken: true }]);
 });
 
 test('a call copied from an earlier session moves the walk on but is no case again', () => {

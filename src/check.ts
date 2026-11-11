@@ -155,13 +155,15 @@ export function walk<T>(s: Sequence, late = false) {
   let came = false; // a call matching `first`
   let waiting: T[] = []; // calls the rule is about, waiting for their `then`
   const step = (s.first ?? s.then)!;
-  // Positions in one call compare only when both patterns read the same field: a command line's simple commands.
-  const inline = step.field === s.when.field;
+  // Positions in one call compare only when both patterns read the same field, by its value: a command line's simple
+  // commands. A then is looked for after the last command the rule is about; a first, before the first.
+  const inline = step.field === s.when.field && needs(s.when.when) && needs(step.when);
+  const last = s.then !== undefined;
   return {
     call(tool: string, input: Record<string, unknown>, item: T | null): { item: T; broken: boolean }[] {
       const decided: { item: T; broken: boolean }[] = [];
-      const at = position(s.when, tool, input);
-      const other = position(step, tool, input);
+      const at = position(s.when, tool, input, last);
+      const other = position(step, tool, input, last);
       if (s.then && waiting.length && other >= 0) {
         for (const w of waiting) decided.push({ item: w, broken: false });
         waiting = [];
@@ -230,18 +232,18 @@ export function verdict(c: Compiled, tool: string, input: Record<string, unknown
   return assess(c, tool, input).verdict;
 }
 
-/** Where in a call a check's `when` first matches: the simple command it does it in, for a shell command, else 0; -1
- * when the check isn't about the call. Within one command line, what runs first comes first. */
-function position(c: Compiled, tool: string, input: Record<string, unknown>): number {
-  if (c.when.tool && !c.when.tool.test(tool)) return -1;
-  const all = views(c.field, input);
-  if (!needs(c.when)) return 0;
-  return all.findIndex((v) => hits(c.when, v));
-}
-
 /** Whether a call is one the check is about, whatever would break it: asked on every call, so it allocates nothing. */
 export function applies(c: Compiled, tool: string, input: Record<string, unknown>): boolean {
   return (!c.when.tool || c.when.tool.test(tool)) && found(c.when, views(c.field, input));
+}
+
+/** Where in a call a check's `when` matches, first or `last`: the simple command it does it in, for a shell command,
+ * else 0; -1 when the check isn't about the call. Within one command line, what runs first comes first. */
+function position(c: Compiled, tool: string, input: Record<string, unknown>, last = false): number {
+  if (c.when.tool && !c.when.tool.test(tool)) return -1;
+  const all = views(c.field, input);
+  if (!needs(c.when)) return 0;
+  return last ? all.findLastIndex((v) => hits(c.when, v)) : all.findIndex((v) => hits(c.when, v));
 }
 
 /**

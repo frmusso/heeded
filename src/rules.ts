@@ -8,7 +8,7 @@ import { ask, batches, pool } from './model.ts';
 import { redact } from './redact.ts';
 
 /** The extraction prompt's version: part of every cache key, so a new prompt reads every section again. */
-export const PROMPT_VERSION = 5;
+export const PROMPT_VERSION = 6;
 export const MODEL = 'sonnet';
 
 /** A heading and its text up to the next heading, with its ancestors' headings as context; the unit rules are read and
@@ -120,10 +120,14 @@ export function verify(raw: unknown, section: Section): Rule | null {
   const at = text.indexOf(collapse(r.quote));
   const [from, to] = [Math.max(0, at - 500), Math.min(text.length, at + collapse(r.quote).length + 1000)];
   const context = `${from ? '…' : ''}${text.slice(from, to)}${to < text.length ? '…' : ''}`;
-  // The model sometimes writes a rule's examples inside its check: they are read where they belong.
-  const { breaking, keeping, ...check } = (r.check ?? {}) as Record<string, unknown>;
-  const examples = { breaking: r.breaking ?? breaking, keeping: r.keeping ?? keeping };
-  const rule: Rule = { ...(r as unknown as Rule), ...(r.check ? { check } : {}),
+  // The model sometimes writes a rule's examples inside its check: they are read where they belong, unless some are
+  // beside it already. A check that isn't an object is no check.
+  const object = typeof r.check === 'object' && r.check !== null && !Array.isArray(r.check);
+  const { breaking, keeping, ...check } = (object ? r.check : {}) as Record<string, unknown>;
+  const either = (beside: unknown, inside: unknown) => (Array.isArray(beside) && beside.length ? beside : inside ?? beside);
+  const examples = { breaking: either(r.breaking, breaking), keeping: either(r.keeping, keeping) };
+  const { check: _, ...rest } = r;
+  const rule: Rule = { ...(rest as unknown as Rule), ...(object ? { check } : {}),
     ...Object.fromEntries(Object.entries(examples).filter(([, v]) => v !== undefined)), id, name, heading, context };
   if (rule.kind === 'judgment') {
     // What breaks a judgment rule is for the judge to say: its check only finds the cases.
@@ -270,11 +274,11 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
         let raw = load(cacheDir, section.hash);
         const read = raw !== null;
         if (raw === null && known) raw = load(cacheDir, known.hash);
-        // Read under the previous prompt only: those rules stand until the section is read under this one. One step
-        // back: a prompt older than that is read again from nothing.
-        if (raw === null) {
-          const older = recall(cacheDir, id, PROMPT_VERSION - 1);
-          raw = load(cacheDir, sectionHash(section.path, section.text, PROMPT_VERSION - 1)) ?? (older && load(cacheDir, older.hash));
+        // Read under an earlier prompt only: the latest of those readings stands until the section is read under this
+        // one, so an update never leaves a project unchecked meanwhile.
+        for (let v = PROMPT_VERSION - 1; raw === null && v >= 1; v--) {
+          const older = recall(cacheDir, id, v);
+          raw = load(cacheDir, sectionHash(section.path, section.text, v)) ?? (older && load(cacheDir, older.hash));
         }
         const rules = (raw ?? []).map((r) => verify(r, section)).filter((r) => r !== null);
         for (const rule of rules) found.rules.push({ ...rule, file: file.path });
@@ -290,14 +294,14 @@ export function rulesOf(cacheDir: string): (file: InstructionFile) => { rules: R
 }
 
 /** Sections go to claude in calls of at most 10,000 characters of their text: in a longer answer the model leaves
- * most rules without their check (on a real file, 1 rule in 16 checked in a call of ~25,000 characters, 12 in 15 with
- * the section alone). */
+ * most rules without their check (on a real file, 80 of 94 rules unchecked in calls of ~25,000 characters, 16 of 95 in
+ * calls of 10,000). A longer section goes alone, and may still lose some. */
 const BATCH = 10_000;
 
 /** What reading `sections` would cost: each call carries ~6.5k tokens of prompt, schema and claude's own; the text is
  * read once and answered with about six and a half times as much (a JSON object per rule, with its check and
- * examples). Fitted on real calls with prompt v5 (13 sections, 32.9k tokens; a short section, 7.5k); the real count is
- * shown after. */
+ * examples). Fitted on real calls with prompt v5 (13 sections in one call, 32.9k tokens; a short section, 7.5k); a
+ * denser file runs well under it (45 sections, 125.7k against 219k). The real count is shown after. */
 export function estimate(sections: Section[]): { calls: number; tokens: number } {
   const calls = batches(sections, (s) => s.text.length, BATCH).length;
   const chars = sections.reduce((n, s) => n + s.text.length, 0);

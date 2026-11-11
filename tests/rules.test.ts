@@ -142,6 +142,20 @@ test("a sequence rule is set aside, with the reason, when its check can't be use
   assert.equal(reason({ ...buildThen, keeping: buildThen.breaking }), 'failed its examples: its keeping calls break it');
 });
 
+test('examples both beside the check and inside it: the ones beside win, unless they are empty', () => {
+  const when = { field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' } };
+  const raw = (beside: unknown) => ({ quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment',
+    trigger: 'committing', check: { ...when, keeping: [{ tool: 'Bash', value: 'git commit -m inside' }] }, keeping: beside });
+  const one = sections('- commit only when asked')[0];
+  assert.deepEqual(verify(raw([{ tool: 'Bash', value: 'git commit -m beside' }]), one)!.keeping, [{ tool: 'Bash', value: 'git commit -m beside' }]);
+  assert.deepEqual(verify(raw([]), one)!.keeping, [{ tool: 'Bash', value: 'git commit -m inside' }]);
+  // A sequence rule's too; and a check that isn't an object is no check.
+  const seq = { ...apiFirst, breaking: undefined, keeping: undefined,
+    check: { ...apiFirst.check, breaking: apiFirst.breaking, keeping: apiFirst.keeping } };
+  assert.equal(verify(seq, order)!.demoted, undefined);
+  assert.equal(verify({ ...raw(undefined), check: 'git commit' }, one)!.check, undefined);
+});
+
 test("a rule's examples written inside its check are read where they belong", () => {
   const inside = { quote: 'commit only when asked', name: 'commit only when asked', kind: 'judgment', trigger: 'committing',
     check: { field: 'command', when: { tool: '^Bash$', value: '(^|\\s)git\\s+commit(\\s|$)' },
@@ -360,14 +374,18 @@ test('an edited section, read under the previous prompt in an earlier version, k
   assert.deepEqual(found.versions.map((v) => [v.read, v.before, v.readAt]), [[false, true, null]]);
 });
 
-test('two prompts back, nothing is kept: the section is read from nothing', () => {
+test('read under an older prompt, however old: the latest of them stands until the section is read under this one', () => {
   const s = sandbox();
   const [later] = sections(v2);
-  const old = sectionHash(later.path, later.text, PROMPT_VERSION - 2);
+  const old = sectionHash(later.path, later.text, PROMPT_VERSION - 3);
   save(s.cacheDir, old, [rule('never force-push')]);
-  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), old, '2026-11-01T10:00:00Z', PROMPT_VERSION - 2);
-  const found = rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: later.text })!;
-  assert.deepEqual([found.rules, found.versions.map((v) => v.before)], [[], [false]]);
+  remember(s.cacheDir, JSON.stringify(['/r/CLAUDE.md', [], '## git']), old, '2026-11-01T10:00:00Z', PROMPT_VERSION - 3);
+  const found = () => rulesOf(s.cacheDir)({ path: '/r/CLAUDE.md', type: 'Project', content: later.text })!;
+  assert.deepEqual([found().rules.map((r) => r.quote), found().versions.map((v) => [v.read, v.before])],
+    [['never force-push'], [[false, true]]]);
+  // A reading under a later prompt wins over an earlier one.
+  save(s.cacheDir, sectionHash(later.path, later.text, PROMPT_VERSION - 2), [rule('never `git add -A`')]);
+  assert.deepEqual(found().rules.map((r) => r.quote), ['never `git add -A`']);
 });
 
 test('a version read under this prompt stands for a section before the same text read under the previous one', () => {
