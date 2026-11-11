@@ -4,7 +4,7 @@ heeded measures whether coding agents follow their instruction files (`CLAUDE.md
 transcripts they leave on disk. this file is for anyone working on its code, and for their agents: [README.md](README.md)
 is for users. personal instructions go in `CLAUDE.local.md`, which git ignores.
 
-**status:** v2 implemented, not published yet.
+**status:** v2.1 implemented, not published yet.
 
 ## principles
 
@@ -63,8 +63,8 @@ instruction files (from the events) ──▶ rules.ts      judge.ts: select wit
   process as `io`, so tests drive every path in-process.
 - `src/claude-code.ts`: the only module that knows claude code. finds the transcripts of the sessions run in a folder
   and streams them, one pass per file, into neutral events (`transcript`, `instructions`, `compaction`, `call`,
-  `reply`, `prompt`: the user's words, answers to the agent's questions included, or a subagent's task). another agent
-  is another adapter emitting the same events.
+  `reply`, `prompt`: the user's words, answers to the agent's questions and the instructions set for the session
+  included, or a subagent's task). another agent is another adapter emitting the same events.
 - `src/rules.ts`: instruction files into sections; the extraction call (one per batch of new sections); local
   verification of what it returns (a judgment rule's `when`, or why it has no cases); the cache: one file per section
   hash, and per section the version read last, whose rules its other versions take.

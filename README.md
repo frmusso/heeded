@@ -46,9 +46,11 @@ before it counts. a rule a plain check can't decide gets the calls or replies it
 
 a pattern written by a model finds candidates, not violations. every call a pattern says broke its rule, and every case
 of a rule no pattern can decide, goes to a judge: your own `claude` again, reading an excerpt of the session, the prompt
-that started the turn and what followed, secrets redacted. only your words grant a permission, typed or picked from a
-question; an agent's never do. a run judges within 150k tokens, asked for with the rest. verdicts are cached, so a case
-is paid for once and coverage grows run after run; a judgment rule is judged until 20 of its cases are decided.
+that started the turn and what followed (a command as run, an edit with the start of what it writes), secrets redacted.
+only your words grant a permission: typed, picked from a question, or set for the session in a `<user-instructions>`
+block a launcher appends to the system prompt; an agent's never do. a run judges within 150k tokens, asked for with the
+rest. verdicts are cached, so a case is paid for once and coverage grows run after run; a judgment rule is judged until
+20 of its cases are decided.
 
 a shell command is read the way the shell reads it, one command at a time: what it runs is checked apart from what it
 carries (a file written through a heredoc, a commit message, the pattern of a search), so writing about `rm -rf` is not
@@ -83,7 +85,7 @@ needs node 22 or later and claude code. reads `CLAUDE_CONFIG_DIR`, else `~/.clau
 local and read-only on your files. the only things that leave your machine are the text of new instruction sections and
 the excerpts the judge reads, secrets redacted, through your own `claude`. no telemetry.
 
-> **status:** v2, not published yet.
+> **status:** v2.1, not published yet.
 
 ## license
 
