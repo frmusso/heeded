@@ -202,8 +202,8 @@ export interface RuleData {
   broken: number;
   /** Cases with a verdict, `none` included. */
   judged: number;
-  /** The cases waiting for the judge now: a tool rule's candidates, neither kept nor broken yet; a judgment rule's cases
-   * its sample still takes. */
+  /** The cases waiting for the judge now: a tool rule's candidates, neither kept nor broken yet; a judgment rule's
+   * cases its sample still takes. */
   toJudge: number;
   afterCompaction: Count;
   byDepth: { from: number; to: number | null; applied: number; broken: number }[];

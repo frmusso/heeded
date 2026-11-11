@@ -71,8 +71,8 @@ export function text(r: Report, o: TextOptions): string {
 
   // The rules' cells, the name column narrowed until the widest row fits: the checked rules; the judgment rules that
   // never applied (their sample ended with every case none, or they had no case) with the others never applied; then
-  // the judgment rules judged on a sample, whose share is of their cases judged. A judgment rule whose cases still wait,
-  // or that no call or reply can show, is counted at the end.
+  // the judgment rules judged on a sample, whose share is of their cases judged. A judgment rule whose cases still
+  // wait, or that no call or reply can show, is counted at the end.
   const unapplied = judgment.filter((x) => !x.reason && !x.applied && !x.toJudge);
   const never = (x: RuleData) => x.status === 'never-applied' || unapplied.includes(x);
   const shown = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)];
@@ -85,7 +85,7 @@ export function text(r: Report, o: TextOptions): string {
   const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]));
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 4)) > o.columns) width--;
-  const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', 'never-applied': '○', judgment: '·' } as Record<string, string>;
+  const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', judgment: '·' } as Record<string, string>;
   const lines = laid(width).map((l, i) => cut(`  ${never(shown[i]) ? '○' : mark[shown[i].status]} ${l}`, o.columns));
   const rules: string[] = [];
   shown.forEach((x, i) => {
