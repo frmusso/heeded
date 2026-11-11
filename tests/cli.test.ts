@@ -36,7 +36,7 @@ reads CLAUDE_CONFIG_DIR, else ~/.claude. caches rules and verdicts in XDG_CACHE_
 test('heeded --version', () => {
   const { status, stdout } = run('--version');
   assert.equal(status, 0);
-  assert.equal(stdout, '0.2.0\n');
+  assert.equal(stdout, '0.2.1\n');
 });
 
 test('an unknown option or command: exit 2, one lowercase line on stderr', () => {
@@ -401,7 +401,7 @@ test('--all: the cases now and the most they can grow to; judged round after rou
   assert.match(err, /^8 cases to judge, more if their rules apply · claude haiku · ~\d+k tokens, at most ~\d+k\n/);
   assert.match(err, /\njudged 12 cases · 8,000 tokens\n$/);
   assert.equal(calls(), 2);
-  assert.match(out, /· commit only when asked +kept 100% of 12 judged/);
+  assert.match(out, /✓ commit only when asked +kept 100% of 12 judged/);
   assert.doesNotMatch(out, /waiting for the judge/);
 });
 

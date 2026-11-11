@@ -85,7 +85,7 @@ export function text(r: Report, o: TextOptions): string {
   const home = (path: string) => tilde(path, o.home);
   const color = (code: number, off: number, s: string) => paint(o.color, code, off, s);
   // Only rules and evidence are cut to the width: a folder's path is never cut.
-  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {4})([✗✓○?·])/gm, (_, indent, mark) =>
+  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {4})([✗✓○?])/gm, (_, indent, mark) =>
     indent + (mark === '✗' ? color(31, 39, mark) : mark === '✓' ? color(32, 39, mark) : color(2, 22, mark)))
     .replace(/^( {8}[a-z]{3} \d.*)$/gm, (line) => color(2, 22, line));
   const unrecognized = r.unrecognized.length
@@ -102,14 +102,18 @@ export function text(r: Report, o: TextOptions): string {
   const counts = `  ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')} · ${thousands(checked.length)} checked`
     + ` · ${thousands(judgment.length)} need a judge${demoted ? ` · ${thousands(demoted)} set aside` : ''}`;
 
-  // The rules' cells, the name column narrowed until the widest row fits: the checked rules; the judgment rules that
-  // never applied (their sample ended with every case none, or they had no case) with the others never applied; then
-  // the judgment rules judged on a sample, whose share is of their cases judged. A judgment rule whose cases still
-  // wait, or that no call or reply can show, is counted at the end.
+  // The rules' cells, the name column narrowed until the widest row fits: the checked rules, and the judgment rules
+  // judged (a sample of their cases, whose share is of the cases judged) or never applied (their sample ended with
+  // every case none). A judgment rule whose cases still wait, or that no call or reply can show, is counted at the end.
   const unapplied = judgment.filter((x) => !x.reason && !x.applied && !x.toJudge);
   const never = (x: RuleData) => x.status === 'never-applied' || unapplied.includes(x);
-  // Grouped by the file each rule is written in (the first, when it is in several), each file in that order.
-  const listed = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)];
+  // A row's mark and place are its outcome, whatever decides the rule ("judged" says it was the judge): broken first,
+  // the least kept leading; kept, the most cases first; to confirm; never applied. Grouped by the file each rule is
+  // written in (the first, when it is in several), each file in that order.
+  const outcome = (x: RuleData) => (x.broken ? 0 : x.applied ? 1 : x.status === 'to-confirm' ? 2 : 3);
+  const share = (x: RuleData) => (x.applied ? (x.applied - x.broken) / x.applied : 0);
+  const listed = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)]
+    .toSorted((a, b) => outcome(a) - outcome(b) || share(a) - share(b) || b.applied - a.applied);
   const order = inOrder(r);
   const shown = order.flatMap((f) => listed.filter((x) => under(order, x) === f));
   const rows = shown.map((x) => [x.name, ...(never(x)
@@ -123,8 +127,8 @@ export function text(r: Report, o: TextOptions): string {
     .map((l, i) => `${at.get(shown[i])}${l}`);
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 6)) > o.columns) width--;
-  const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', judgment: '·' } as Record<string, string>;
-  const lines = laid(width).map((l, i) => cut(`    ${never(shown[i]) ? '○' : mark[shown[i].status]} ${l}`, o.columns));
+  const mark = (x: RuleData) => (never(x) ? '○' : x.broken ? '✗' : x.status === 'to-confirm' ? '?' : '✓');
+  const lines = laid(width).map((l, i) => cut(`    ${mark(shown[i])} ${l}`, o.columns));
   const rules: string[] = [];
   shown.forEach((x, i) => {
     const file = under(order, x)!;

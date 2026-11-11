@@ -74,6 +74,8 @@ const sketch: Report = {
 const options = { columns: 80, color: false, now: new Date('2026-11-10T15:00:00Z'), home: '/home/someone' };
 
 const rows80 = `  CLAUDE.md
+    ✗ failing test fir…  kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
     ✗ never git add -A   kept 95% of 214            broken 9×    last 2 days ago
         nov 8   19df6c20  git add -A && git commit -m "fix: …"
         nov 2   8c0e8fab  git add -A
@@ -83,8 +85,6 @@ const rows80 = `  CLAUDE.md
         nov 10  e7128125  en: "Sure — here's the plan for the …"
     ? never push to ma…  4 to confirm
     ○ never kill billi…  never applied              ~40 tokens every session
-    · failing test fir…  kept 80% of 20 judged      broken 4×    last 3 days ago
-        nov 7   1a2b3c4d  call Edit: src/x.ts
   ~/.claude/CLAUDE.md
     ✓ never force-push   kept 100% of 61            2 to confirm
     ○ clickup writes     never applied in 8 judged  ~30 tokens every session
@@ -94,6 +94,8 @@ const at80 = `
   3 files · 9 rules · 5 checked · 4 need a judge
 
   CLAUDE.md
+    ✗ failing test fir…  kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
     ✗ never git add -A   kept 95% of 214            broken 9×    last 2 days ago
         nov 8   19df6c20  git add -A && git commit -m "fix: …"
         nov 2   8c0e8fab  git add -A
@@ -103,8 +105,6 @@ const at80 = `
         nov 10  e7128125  en: "Sure — here's the plan for the …"
     ? never push to ma…  4 to confirm
     ○ never kill billi…  never applied              ~40 tokens every session
-    · failing test fir…  kept 80% of 20 judged      broken 4×    last 3 days ago
-        nov 7   1a2b3c4d  call Edit: src/x.ts
   ~/.claude/CLAUDE.md
     ✓ never force-push   kept 100% of 61            2 to confirm
     ○ clickup writes     never applied in 8 judged  ~30 tokens every session
@@ -123,6 +123,8 @@ test('the report at 80 columns: the names are cut to fit', () => {
 test('the report at 120 columns: names whole', () => {
   const rows = `
   CLAUDE.md
+    ✗ failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
     ✗ never git add -A              kept 95% of 214            broken 9×    last 2 days ago
         nov 8   19df6c20  git add -A && git commit -m "fix: …"
         nov 2   8c0e8fab  git add -A
@@ -132,8 +134,6 @@ test('the report at 120 columns: names whole', () => {
         nov 10  e7128125  en: "Sure — here's the plan for the …"
     ? never push to main            4 to confirm
     ○ never kill billing            never applied              ~40 tokens every session
-    · failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
-        nov 7   1a2b3c4d  call Edit: src/x.ts
   ~/.claude/CLAUDE.md
     ✓ never force-push              kept 100% of 61            2 to confirm
     ○ clickup writes                never applied in 8 judged  ~30 tokens every session
@@ -145,7 +145,7 @@ test('the report at 120 columns: names whole', () => {
 
 test('in colour: the marks, and the evidence dimmed', () => {
   const coloured = at80.replace(/✗/g, '\x1b[31m✗\x1b[39m').replace('✓', '\x1b[32m✓\x1b[39m').replace(/○/g, '\x1b[2m○\x1b[22m')
-    .replace('    ? ', '    \x1b[2m?\x1b[22m ').replace('    · failing', '    \x1b[2m·\x1b[22m failing')
+    .replace('    ? ', '    \x1b[2m?\x1b[22m ')
     .replace(/^( {8}(?:nov|oct) .*)$/gm, '\x1b[2m$1\x1b[22m');
   assert.equal(text(sketch, { ...options, color: true }), coloured);
 });
@@ -180,7 +180,7 @@ test('tokens as heeded says them', () => {
 
 test("the rules under the file they are written in: the folder's files first, then the others; a file with nothing shown has no line", () => {
   const out = text(sketch, { ...options, columns: 120 });
-  assert.match(out, /\n {2}CLAUDE\.md\n {4}✗ never git add -A [^\n]+\n {8}nov 8 [\s\S]*\n {4}· failing test first [^\n]+\n {8}nov 7 [^\n]+\n {2}~\/\.claude\/CLAUDE\.md\n {4}✓ never force-push [^\n]+\n {4}○ clickup writes /);
+  assert.match(out, /\n {2}CLAUDE\.md\n {4}✗ failing test first [^\n]+\n {8}nov 7 [^\n]+\n {4}✗ never git add -A [^\n]+\n {8}nov 8 [\s\S]*\n {4}○ never kill billing [^\n]+\n {2}~\/\.claude\/CLAUDE\.md\n {4}✓ never force-push [^\n]+\n {4}○ clickup writes /);
   assert.doesNotMatch(out, /web\/CLAUDE\.md/);
   // Columns line up across files.
   const at = (name: string) => out.split('\n').find((l) => l.includes(name))!.search(/(kept|never applied)/);
@@ -210,6 +210,8 @@ const placed = (report: Report): Report => ({ ...report, rules: report.rules.map
 test("each rule's line in its file after the mark, padded to the widest; none where the file no longer has its words", () => {
   const rows = `
   CLAUDE.md
+    ✗ :27   failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
     ✗ :12   never git add -A              kept 95% of 214            broken 9×    last 2 days ago
         nov 8   19df6c20  git add -A && git commit -m "fix: …"
         nov 2   8c0e8fab  git add -A
@@ -219,8 +221,6 @@ test("each rule's line in its file after the mark, padded to the widest; none wh
         nov 10  e7128125  en: "Sure — here's the plan for the …"
     ?       never push to main            4 to confirm
     ○ :140  never kill billing            never applied              ~40 tokens every session
-    · :27   failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
-        nov 7   1a2b3c4d  call Edit: src/x.ts
   ~/.claude/CLAUDE.md
     ✓ :104  never force-push              kept 100% of 61            2 to confirm
     ○ :7    clickup writes                never applied in 8 judged  ~30 tokens every session
@@ -245,6 +245,24 @@ test("heeded rules: each rule's line in its file, the same way", () => {
     .replace('✓      never git add -A', '✓ :8   never git add -A')
     .replace('✓      always talk', '✓ :21  always talk')
     .replace('✓      clickup', '✓ :4   clickup'));
+});
+
+test("a judged rule's mark is its outcome, and so is its place: broken first, the least kept leading", () => {
+  const report = { ...sketch, toJudge: 0, rules: [
+    r('never git add -A', 'broken', 214, 9, { evidence: [seen('2026-11-08T12:00:00Z', '19df6c20', 'git add -A')] }),
+    r('failing test first', 'judgment', 20, 4, { judged: 26, evidence: [
+      { ...seen('2026-11-07T12:00:00Z', '1a2b3c4d', 'call Edit: src/x.ts'), quote: 'call Edit: src/x.ts' }] }),
+    r('never force-push', 'kept', 61, 0),
+    r('say what you changed', 'judgment', 70, 0, { judged: 70 }),
+    r('never push to main', 'to-confirm', 0, 0, { toJudge: 4 }),
+    r('plan before coding', 'judgment', 0, 0, { judged: 8 }),
+  ] };
+  const out = text(report, { ...options, columns: 120 });
+  const rows = out.split('\n').filter((l) => /^ {4}\S/.test(l)).map((l) => l.trim().replace(/ {2,}.*/, ''));
+  assert.deepEqual(rows, ['✗ failing test first', '✗ never git add -A', '✓ say what you changed', '✓ never force-push',
+    '? never push to main', '○ plan before coding']);
+  assert.match(out, /✗ failing test first +kept 80% of 20 judged +broken 4×/);
+  assert.match(text(report, { ...options, columns: 120, color: true }), /\x1b\[31m✗\x1b\[39m failing test first/);
 });
 
 test('no transcripts: one line naming the folder and the config dir', () => {

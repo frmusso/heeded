@@ -12,12 +12,13 @@ $ npx heeded
   3 files · 41 rules · 12 checked · 29 need a judge
 
   CLAUDE.md
+    ✗ :30  failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   4d2e9a10  call Edit: src/parser.ts
     ✗ :12  never git add -A    kept 95% of 214            broken 9×    last 2 days ago
         nov 8   19df6c20  git add -A && git commit -m "fix: …"
         nov 2   8c0e8fab  git add -A
     ✓ :14  never force-push    kept 100% of 61
     ○ :21  use pnpm, not npm   never applied              ~40 tokens every session
-    · :30  failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
   ~/.claude/CLAUDE.md
     ✗ :3   answer in italian   kept 96% of 3,812          broken 152×  last today
         after compaction kept 69% of 410
@@ -38,9 +39,9 @@ $ npx heeded
 | `✓` | was kept every time it applied |
 | `?` | has candidates only: a pattern flagged them, the judge hasn't looked yet |
 | `○` | never applied in these sessions: it sits in every session's context all the same |
-| `·` | needs a judge, no pattern can decide it: a sample of its cases was judged |
 
 - `kept 95% of 214`: the rule applied 214 times and was kept in 95% of them.
+- `of 20 judged`: no pattern can decide the rule, so the judge read a sample of its cases: 20 of them applied.
 - `after compaction`: the same rule, counted only after claude code compacted the context.
 - each rule is under the file it is written in: the folder's files first, then the others (`~/.claude/CLAUDE.md` is
   loaded in every project, so a rule there can be never applied here and needed elsewhere).
