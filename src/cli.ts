@@ -9,7 +9,7 @@ import { counter } from './check.ts';
 import { read } from './claude-code.ts';
 import { BUDGET, type Case, estimate as judgingEstimate, JUDGE_MODEL, judge, select, verdicts } from './judge.ts';
 import { approx, json, type Report, rules, text } from './report.ts';
-import { estimate, extract, MODEL, type Pending, remember, rulesOf } from './rules.ts';
+import { estimate, extract, lineOf, MODEL, type Pending, remember, rulesOf } from './rules.ts';
 
 const HELP = `heeded — did your coding agent follow its instructions?
 
@@ -48,6 +48,25 @@ async function scan(configDir: string, folder: string, cacheDir: string):
   const { unrecognized } = await read(configDir, folder, count.on);
   for (const v of count.readVersions()) remember(cacheDir, v.identity, v.section.hash, v.at);
   const data = count.result();
+  // Where each rule is written now, what the user opens to rewrite or remove it: its files as they are on disk, a file
+  // gone read as empty.
+  const onDisk = new Map<string, string>();
+  const content = (file: string) => {
+    if (!onDisk.has(file)) {
+      try {
+        onDisk.set(file, readFileSync(file, 'utf8'));
+      } catch {
+        onDisk.set(file, '');
+      }
+    }
+    return onDisk.get(file)!;
+  };
+  for (const rule of data.rules) {
+    for (const file of rule.files) {
+      const line = lineOf(content(file), rule.quote);
+      if (line) rule.lines[file] = line;
+    }
+  }
   const waiting = count.waiting();
   // A tool rule lists 40 of its candidates: the others cost what those listed cost on average.
   const listed = [...waiting.tool, ...waiting.judgment].flat();

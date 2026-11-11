@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { load, PROMPT_VERSION, remember, rulesOf, save, sectionHash, sections, verify } from '../src/rules.ts';
+import { lineOf, load, PROMPT_VERSION, remember, rulesOf, save, sectionHash, sections, verify } from '../src/rules.ts';
 import { sandbox } from './support/sandbox.ts';
 
 const shape = (content: string) => sections(content).map(({ path, text }) => ({ path, text }));
@@ -80,6 +80,17 @@ test('a name is cut to 40 characters, and says so', () => {
   assert.equal(verify({ ...gitAdd, name: forty }, section)!.name, forty);
   assert.equal(verify({ ...gitAdd, name: `Nessuna scrittura né mutazione Railway: è ${'x'.repeat(9)}` }, section)!.name,
     'Nessuna scrittura né mutazione Railway:…');
+});
+
+test("a rule's line in its file: where its words start, spacing aside; none when the file no longer has them", () => {
+  const file = '# app\r\n\n## git\n\n- never `git add -A`: stage files\n  by name.\n- talk  to the user\tin italian (*always*)\n';
+  assert.equal(lineOf(file, 'never `git add -A`'), 5);
+  assert.equal(lineOf(file, 'stage files by name.'), 5);
+  assert.equal(lineOf(file, 'by name.'), 6);
+  assert.equal(lineOf(file, 'talk to the user in italian (*always*)'), 7);
+  assert.equal(lineOf(file, 'never `git add -a`'), null);
+  assert.equal(lineOf(file, 'stage files by name!'), null);
+  assert.equal(lineOf(file, ' '), null);
 });
 
 test('a tool rule whose pattern is refused is demoted, with the reason', () => {

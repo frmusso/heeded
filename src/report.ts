@@ -45,6 +45,17 @@ const inOrder = (r: Report) => {
 /** The file a rule is listed under: of the files it is written in, the first listed. */
 const under = (order: string[], x: RuleData) => order.find((f) => x.files.includes(f));
 
+/** Each rule's line in the file it is listed under, as `:12`, padded to the widest: where the user goes to rewrite or
+ * remove it. No column when no rule has one (its file gone, or edited since and its words with it). */
+const lineCells = (order: string[], rules: RuleData[]): Map<RuleData, string> => {
+  const line = (x: RuleData) => {
+    const n = x.lines[under(order, x) ?? ''];
+    return n ? `:${n}` : '';
+  };
+  const width = Math.max(0, ...rules.map((x) => line(x).length));
+  return new Map(rules.map((x) => [x, width ? `${line(x).padEnd(width)}  ` : '']));
+};
+
 /** A file as the user finds it: by its path in the folder, or from home. */
 const where = (r: Report, path: string, home: string) =>
   (path.startsWith(`${r.folder}/`) ? path.slice(r.folder.length + 1) : tilde(path, home));
@@ -107,7 +118,9 @@ export function text(r: Report, o: TextOptions): string {
     : [`kept ${kept(x.applied, x.broken)} of ${thousands(x.applied)}${x.status === 'judgment' ? ' judged' : ''}`,
       ...(x.broken ? [`broken ${thousands(x.broken)}×`, `last ${ago(x.evidence[0].at, o.now)}`] : [])]),
   ...(x.status !== 'judgment' && x.toJudge ? [`${thousands(x.toJudge)} to confirm`] : [])]);
-  const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]));
+  const at = lineCells(order, shown);
+  const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]))
+    .map((l, i) => `${at.get(shown[i])}${l}`);
   let width = Math.max(...rows.map((row) => row[0].length));
   while (width > 10 && Math.max(...laid(width).map((l) => l.length + 6)) > o.columns) width--;
   const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', judgment: '·' } as Record<string, string>;
@@ -179,13 +192,14 @@ export function rules(r: Report, o: { color: boolean; home: string }): string {
   const width = Math.max(...r.rules.map((x) => x.name.length));
   const lines = ['', `  ${tilde(r.folder, o.home)} · ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')}`, ''];
   const order = inOrder(r);
+  const at = lineCells(order, r.rules);
   for (const file of order) {
     const mine = r.rules.filter((x) => under(order, x) === file);
     if (mine.length) lines.push(`  ${where(r, file, o.home)}`);
     for (const x of mine) {
       const mark = x.status === 'judgment' ? paint(o.color, 2, 22, '·') : x.status === 'demoted' ? paint(o.color, 33, 39, '!')
         : paint(o.color, 32, 39, '✓');
-      lines.push(`    ${mark} ${x.name.padEnd(width + 2)}${how(x)}`);
+      lines.push(`    ${mark} ${at.get(x)}${x.name.padEnd(width + 2)}${how(x)}`);
     }
   }
   if (r.notRead || r.toReread) lines.push('', ...toRead(r));

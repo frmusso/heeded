@@ -17,6 +17,7 @@ test('the json document: heeded 2 first, then the report, two-space indented', (
     files: ['/home/someone/repos/app/CLAUDE.md'],
     rules: [{
       id: '3f2a9c1e', name: 'never sudo', quote: 'never `sudo`', files: ['/home/someone/repos/app/CLAUDE.md'],
+      lines: { '/home/someone/repos/app/CLAUDE.md': 12 },
       status: 'demoted', reason: 'failed its examples: breaks "sudo ls"',
       check: { field: 'command', when: { tool: '^Bash$' }, broken: { value: '^sudo ' } },
       applied: 0, broken: 0, judged: 0, toJudge: 0, afterCompaction: { applied: 0, broken: 0 },
@@ -38,7 +39,8 @@ test('the json document of an empty history', () => {
 
 // The sketch of the report, with numbers that give its percentages.
 const r = (name: string, status: RuleData['status'], applied: number, broken: number, more: Partial<RuleData> = {}): RuleData => ({
-  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], status, applied, broken, judged: 0, toJudge: 0,
+  id: name, name, quote: name, files: ['/home/someone/repos/billing/CLAUDE.md'], lines: {}, status, applied, broken, judged: 0,
+  toJudge: 0,
   afterCompaction: { applied: 0, broken: 0 }, byDepth: buckets([[0, 0], [0, 0], [0, 0], [0, 0]]), tokens: 5, evidence: [],
   ...more,
 });
@@ -196,6 +198,53 @@ test('a rule in several files is listed under the first the report lists; the fo
   assert.match(out, /\n {2}CLAUDE\.md\n {4}✓ never git add -A [^\n]+\n {4}✓ never force-push /);
   assert.doesNotMatch(out, /worktrees|~\/\.claude/);
   assert.match(rules(report, { color: false, home: '/home/someone' }), /\n {2}CLAUDE\.md\n {4}✓ never git add -A [^\n]+\n {4}✓ never force-push /);
+});
+
+// Each rule's line in the file it is listed under; 'never push to main' is in that file no longer (its line is in another).
+const billing = '/home/someone/repos/billing/CLAUDE.md';
+const where: Record<string, Record<string, number>> = { 'never git add -A': { [billing]: 12 },
+  'always talk to me in italian': { [billing]: 3 }, 'never push to main': { [own]: 9 }, 'never kill billing': { [billing]: 140 },
+  'failing test first': { [billing]: 27 }, 'never force-push': { [own]: 104 }, 'clickup writes': { [own]: 7 } };
+const placed = (report: Report): Report => ({ ...report, rules: report.rules.map((x) => ({ ...x, lines: where[x.name] ?? {} })) });
+
+test("each rule's line in its file after the mark, padded to the widest; none where the file no longer has its words", () => {
+  const rows = `
+  CLAUDE.md
+    ✗ :12   never git add -A              kept 95% of 214            broken 9×    last 2 days ago
+        nov 8   19df6c20  git add -A && git commit -m "fix: …"
+        nov 2   8c0e8fab  git add -A
+        oct 29  4f1c22d0  git add -A
+    ✗ :3    always talk to me in italian  kept 96% of 3,812          broken 152×  last today
+        after compaction kept 69% of 410
+        nov 10  e7128125  en: "Sure — here's the plan for the …"
+    ?       never push to main            4 to confirm
+    ○ :140  never kill billing            never applied              ~40 tokens every session
+    · :27   failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
+  ~/.claude/CLAUDE.md
+    ✓ :104  never force-push              kept 100% of 61            2 to confirm
+    ○ :7    clickup writes                never applied in 8 judged  ~30 tokens every session
+`;
+  assert.equal(text(placed(sketch), { ...options, columns: 120 }), at80.replace(`\n${rows80}`, rows));
+});
+
+test('with lines, the names are cut to fit 80 columns, the lines whole', () => {
+  const out = text(placed(sketch), options);
+  for (const line of out.split('\n')) assert.ok(line.length <= 80, line);
+  assert.match(out, /\n {4}✗ :12 {3}never git …  kept 95% of 214 /);
+  assert.match(out, /\n {4}○ :140 {2}never kill…  never applied /);
+  assert.match(text(placed(sketch), { ...options, color: true }), /\n {4}\x1b\[31m✗\x1b\[39m :12 {3}never git …/);
+});
+
+test("heeded rules: each rule's line in its file, the same way", () => {
+  const lines = { 'never git add -A': { [local]: 8 }, 'always talk to me in italian': { [local]: 21 },
+    'clickup is read-only': { '/home/someone/.claude/CLAUDE.md': 4 } } as Record<string, Record<string, number>>;
+  const out = rules({ ...found, rules: found.rules.map((x) => ({ ...x, lines: lines[x.name] ?? {} })) },
+    { color: false, home: '/home/someone' });
+  assert.equal(out, listed.replace(/\n {4}(.) /g, (_, mark) => `\n    ${mark}      `)
+    .replace('✓      never git add -A', '✓ :8   never git add -A')
+    .replace('✓      always talk', '✓ :21  always talk')
+    .replace('✓      clickup', '✓ :4   clickup'));
 });
 
 test('no transcripts: one line naming the folder and the config dir', () => {

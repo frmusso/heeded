@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { counter } from '../src/check.ts';
@@ -216,6 +216,21 @@ test('heeded rules: the rules and how each is checked', async () => {
   const { code, out } = await heeded(['rules']);
   assert.equal(code, 0);
   assert.match(out, /CLAUDE\.md\n {4}✓ never git add -A {2}Bash command {2}when /);
+});
+
+test("each rule's line in its file as it is on disk now; none once its words are gone, or the file is", async () => {
+  const { repo, heeded } = setup({ cached: true });
+  const md = join(repo, 'CLAUDE.md');
+  // Edited since the session: the rule moved down, its words wrapped.
+  writeFileSync(md, '# app\n\nwhat it is\n\n## git\n\n- stage by name, never\n  `git add -A`\n');
+  assert.deepEqual(JSON.parse((await heeded(['--json'])).out).rules[0].lines, { [md]: 7 });
+  assert.match((await heeded([])).out, /\n {2}CLAUDE\.md\n {4}\? :7 {2}never git add -A {2}1 to confirm\n/);
+  assert.match((await heeded(['rules'])).out, /\n {4}✓ :7 {2}never git add -A {2}Bash command/);
+  writeFileSync(md, '# app\n\n- stage by name\n');
+  assert.deepEqual(JSON.parse((await heeded(['--json'])).out).rules[0].lines, {});
+  assert.match((await heeded([])).out, /\n {4}\? never git add -A {2}1 to confirm\n/);
+  rmSync(md);
+  assert.deepEqual(JSON.parse((await heeded(['--json'])).out).rules[0].lines, {});
 });
 
 test('heeded rules never judges: what it lists doesn\'t depend on verdicts', async () => {

@@ -77,6 +77,14 @@ export interface Rule {
 
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
 
+/** The line a rule's words start on in a file's text, however they are spaced and wrapped there; null when the text no
+ * longer holds them. What the user opens to rewrite or remove the rule. */
+export function lineOf(content: string, quote: string): number | null {
+  const words = quote.split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const at = words.length ? new RegExp(words.join('\\s+')).exec(content)?.index : undefined;
+  return at === undefined ? null : content.slice(0, at).split('\n').length;
+}
+
 /**
  * A rule as the extraction returned it, checked here: its quote must be in its section as the model read it (secrets
  * redacted), word for word (spacing aside), or the rule is dropped; a check that can't be trusted is demoted, with the

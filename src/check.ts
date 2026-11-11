@@ -195,6 +195,8 @@ export interface RuleData {
   name: string;
   quote: string;
   files: string[];
+  /** Its line in each of its files as they are on disk now, for the files that still hold its words. */
+  lines: Record<string, number>;
   status: 'broken' | 'kept' | 'to-confirm' | 'never-applied' | 'judgment' | 'demoted';
   reason?: string;
   check?: Rule['check'];
@@ -501,6 +503,7 @@ export function counter(rulesOf: (file: InstructionFile) => { rules: Rule[]; ver
           name: rule.name,
           quote: rule.quote,
           files: [...files],
+          lines: {},
           status: rule.kind === 'judgment' ? 'judgment' : rule.demoted ? 'demoted'
             : all.broken ? 'broken' : all.applied ? 'kept' : unjudged ? 'to-confirm' : 'never-applied',
           ...(rule.demoted || rule.noCases ? { reason: rule.demoted ?? rule.noCases } : {}),
