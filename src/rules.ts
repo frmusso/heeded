@@ -86,7 +86,8 @@ export function verify(raw: unknown, section: Section): Rule | null {
   const r = raw as Record<string, unknown>;
   if (typeof r?.quote !== 'string' || !collapse(redact(section.text)).includes(collapse(r.quote))) return null;
   const id = createHash('sha256').update(collapse(r.quote).toLowerCase()).digest('hex').slice(0, 8);
-  const name = [...String(r.name).replace(/[\p{Cc}\s]+/gu, ' ').trim()].slice(0, 40).join('').trimEnd();
+  const chars = [...String(r.name).replace(/[\p{Cc}\s]+/gu, ' ').trim()];
+  const name = chars.length > 40 ? `${chars.slice(0, 39).join('').trimEnd()}…` : chars.join('');
   const own = /^#{1,6}[ \t]+(.+)$/.exec(section.text.split('\n')[0])?.[1].trim();
   const heading = [...section.path, ...(own ? [own] : [])].join(' › ');
   // What the section says around the rule: from 500 characters before its words to 1,000 after.

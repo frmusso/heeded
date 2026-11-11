@@ -72,9 +72,14 @@ test('a rule is known by its quote: the same words with other spacing or case ha
   assert.notEqual(verify({ ...gitAdd, quote: 'talk to the user in italian' }, section)!.id, a!.id);
 });
 
-test('a name is cut to 40 characters', () => {
+test('a name is cut to 40 characters, and says so', () => {
   const name = 'never stage every file at once with git add -A';
-  assert.equal(verify({ ...gitAdd, name }, section)!.name, 'never stage every file at once with git');
+  assert.equal(verify({ ...gitAdd, name }, section)!.name, 'never stage every file at once with git…');
+  const forty = 'never stage every file at once, with add';
+  assert.equal([...forty].length, 40);
+  assert.equal(verify({ ...gitAdd, name: forty }, section)!.name, forty);
+  assert.equal(verify({ ...gitAdd, name: `Nessuna scrittura né mutazione Railway: è ${'x'.repeat(9)}` }, section)!.name,
+    'Nessuna scrittura né mutazione Railway:…');
 });
 
 test('a tool rule whose pattern is refused is demoted, with the reason', () => {
