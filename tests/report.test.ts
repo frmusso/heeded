@@ -43,9 +43,11 @@ const r = (name: string, status: RuleData['status'], applied: number, broken: nu
   ...more,
 });
 const seen = (at: string, session: string, text: string) => ({ at, session: `${session}-0000-4000-8000-000000000000`, agent: null, text });
+const own = '/home/someone/.claude/CLAUDE.md';
+const web = '/home/someone/repos/billing/web/CLAUDE.md';
 const sketch: Report = {
   ...empty, folder: '/home/someone/repos/billing', from: '2026-10-11T12:00:00Z', to: '2026-11-10T12:00:00Z', sessions: 76,
-  subagents: 412, files: ['a', 'b', 'c'],
+  subagents: 412, files: [own, '/home/someone/repos/billing/CLAUDE.md', web],
   rules: [
     r('never git add -A', 'broken', 214, 9, { afterCompaction: { applied: 12, broken: 3 }, evidence: [
       seen('2026-11-08T12:00:00Z', '19df6c20', 'git add -A && git commit -m "fix: …"'),
@@ -53,14 +55,14 @@ const sketch: Report = {
       seen('2026-10-20T12:00:00Z', '0a1b2c3d', 'git add -A')] }),
     r('always talk to me in italian', 'broken', 3812, 152, { afterCompaction: { applied: 410, broken: 127 }, evidence: [
       seen('2026-11-10T09:00:00Z', 'e7128125', 'en: "Sure — here\'s the plan for the …"')] }),
-    r('never force-push', 'kept', 61, 0, { toJudge: 2 }),
+    r('never force-push', 'kept', 61, 0, { toJudge: 2, files: [own] }),
     r('never push to main', 'to-confirm', 0, 0, { toJudge: 4 }),
     r('never kill billing', 'never-applied', 0, 0, { tokens: 40 }),
     r('failing test first', 'judgment', 20, 4, { judged: 26, evidence: [
       { ...seen('2026-11-07T12:00:00Z', '1a2b3c4d', 'call Edit: src/x.ts'), quote: 'call Edit: src/x.ts' }] }),
     r('ask before spending', 'judgment', 0, 0, { toJudge: 3 }),
-    r('clickup writes', 'judgment', 0, 0, { judged: 8, tokens: 30 }),
-    r('plan before coding', 'judgment', 0, 0, { reason: 'no case to judge it on' }),
+    r('clickup writes', 'judgment', 0, 0, { judged: 8, tokens: 30, files: [own] }),
+    r('plan before coding', 'judgment', 0, 0, { reason: 'no case to judge it on', files: [web] }),
   ],
   toJudge: 9,
   toJudgeTokens: 31_000,
@@ -69,23 +71,41 @@ const sketch: Report = {
 };
 const options = { columns: 80, color: false, now: new Date('2026-11-10T15:00:00Z'), home: '/home/someone' };
 
+const rows80 = `  CLAUDE.md
+    ✗ never git add -A   kept 95% of 214            broken 9×    last 2 days ago
+        nov 8   19df6c20  git add -A && git commit -m "fix: …"
+        nov 2   8c0e8fab  git add -A
+        oct 29  4f1c22d0  git add -A
+    ✗ always talk to m…  kept 96% of 3,812          broken 152×  last today
+        after compaction kept 69% of 410
+        nov 10  e7128125  en: "Sure — here's the plan for the …"
+    ? never push to ma…  4 to confirm
+    ○ never kill billi…  never applied              ~40 tokens every session
+    · failing test fir…  kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
+  ~/.claude/CLAUDE.md
+    ✓ never force-push   kept 100% of 61            2 to confirm
+    ○ clickup writes     never applied in 8 judged  ~30 tokens every session
+`;
 const at80 = `
   ~/repos/billing · 76 sessions, 412 subagents · oct 11 – nov 10
   3 files · 9 rules · 5 checked · 4 need a judge
 
-  ✗ never git add -A     kept 95% of 214            broken 9×    last 2 days ago
-      nov 8   19df6c20  git add -A && git commit -m "fix: …"
-      nov 2   8c0e8fab  git add -A
-      oct 29  4f1c22d0  git add -A
-  ✗ always talk to me …  kept 96% of 3,812          broken 152×  last today
-      after compaction kept 69% of 410
-      nov 10  e7128125  en: "Sure — here's the plan for the …"
-  ✓ never force-push     kept 100% of 61            2 to confirm
-  ? never push to main   4 to confirm
-  ○ never kill billing   never applied              ~40 tokens every session
-  ○ clickup writes       never applied in 8 judged  ~30 tokens every session
-  · failing test first   kept 80% of 20 judged      broken 4×    last 3 days ago
-      nov 7   1a2b3c4d  call Edit: src/x.ts
+  CLAUDE.md
+    ✗ never git add -A   kept 95% of 214            broken 9×    last 2 days ago
+        nov 8   19df6c20  git add -A && git commit -m "fix: …"
+        nov 2   8c0e8fab  git add -A
+        oct 29  4f1c22d0  git add -A
+    ✗ always talk to m…  kept 96% of 3,812          broken 152×  last today
+        after compaction kept 69% of 410
+        nov 10  e7128125  en: "Sure — here's the plan for the …"
+    ? never push to ma…  4 to confirm
+    ○ never kill billi…  never applied              ~40 tokens every session
+    · failing test fir…  kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
+  ~/.claude/CLAUDE.md
+    ✓ never force-push   kept 100% of 61            2 to confirm
+    ○ clickup writes     never applied in 8 judged  ~30 tokens every session
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                              98%        97%        91%     84%
@@ -100,35 +120,38 @@ test('the report at 80 columns: the names are cut to fit', () => {
 
 test('the report at 120 columns: names whole', () => {
   const rows = `
-  ✗ never git add -A              kept 95% of 214            broken 9×    last 2 days ago
-      nov 8   19df6c20  git add -A && git commit -m "fix: …"
-      nov 2   8c0e8fab  git add -A
-      oct 29  4f1c22d0  git add -A
-  ✗ always talk to me in italian  kept 96% of 3,812          broken 152×  last today
-      after compaction kept 69% of 410
-      nov 10  e7128125  en: "Sure — here's the plan for the …"
-  ✓ never force-push              kept 100% of 61            2 to confirm
-  ? never push to main            4 to confirm
-  ○ never kill billing            never applied              ~40 tokens every session
-  ○ clickup writes                never applied in 8 judged  ~30 tokens every session
-  · failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
-      nov 7   1a2b3c4d  call Edit: src/x.ts
+  CLAUDE.md
+    ✗ never git add -A              kept 95% of 214            broken 9×    last 2 days ago
+        nov 8   19df6c20  git add -A && git commit -m "fix: …"
+        nov 2   8c0e8fab  git add -A
+        oct 29  4f1c22d0  git add -A
+    ✗ always talk to me in italian  kept 96% of 3,812          broken 152×  last today
+        after compaction kept 69% of 410
+        nov 10  e7128125  en: "Sure — here's the plan for the …"
+    ? never push to main            4 to confirm
+    ○ never kill billing            never applied              ~40 tokens every session
+    · failing test first            kept 80% of 20 judged      broken 4×    last 3 days ago
+        nov 7   1a2b3c4d  call Edit: src/x.ts
+  ~/.claude/CLAUDE.md
+    ✓ never force-push              kept 100% of 61            2 to confirm
+    ○ clickup writes                never applied in 8 judged  ~30 tokens every session
 `;
-  const at120 = at80.replace(/\n {2}✗[\s\S]*src\/x\.ts\n/, rows);
+  const at120 = at80.replace(`\n${rows80}`, rows);
   assert.notEqual(at120, at80);
   assert.equal(text(sketch, { ...options, columns: 120 }), at120);
 });
 
 test('in colour: the marks, and the evidence dimmed', () => {
   const coloured = at80.replace(/✗/g, '\x1b[31m✗\x1b[39m').replace('✓', '\x1b[32m✓\x1b[39m').replace(/○/g, '\x1b[2m○\x1b[22m')
-    .replace('  ? ', '  \x1b[2m?\x1b[22m ').replace('  · failing', '  \x1b[2m·\x1b[22m failing')
-    .replace(/^( {6}(?:nov|oct) .*)$/gm, '\x1b[2m$1\x1b[22m');
+    .replace('    ? ', '    \x1b[2m?\x1b[22m ').replace('    · failing', '    \x1b[2m·\x1b[22m failing')
+    .replace(/^( {8}(?:nov|oct) .*)$/gm, '\x1b[2m$1\x1b[22m');
   assert.equal(text(sketch, { ...options, color: true }), coloured);
 });
 
 test('a judgment rule that never applied is listed with the never-applied rules; one still waiting or with no case is not', () => {
   const out = text(sketch, { ...options, columns: 120 });
-  assert.match(out, /\n {2}○ never kill billing +never applied +~40 tokens every session\n {2}○ clickup writes +never applied in 8 judged +~30 tokens every session\n {2}· failing test first /);
+  assert.match(out, /\n {4}○ never kill billing +never applied +~40 tokens every session\n/);
+  assert.match(out, /\n {4}○ clickup writes +never applied in 8 judged +~30 tokens every session\n/);
   assert.doesNotMatch(out, /ask before spending|plan before coding/);
 });
 
@@ -142,6 +165,15 @@ test('the end: the rules no case shows and those set aside, then the cases waiti
 
 test('tokens as heeded says them', () => {
   assert.deepEqual([106_000, 999_499, 999_500, 1_140_000, 2_702_000].map(approx), ['~106k', '~999k', '~1M', '~1.1M', '~2.7M']);
+});
+
+test("the rules under the file they are written in: the folder's files first, then the others; a file with nothing shown has no line", () => {
+  const out = text(sketch, { ...options, columns: 120 });
+  assert.match(out, /\n {2}CLAUDE\.md\n {4}✗ never git add -A [^\n]+\n {8}nov 8 [\s\S]*\n {4}· failing test first [^\n]+\n {8}nov 7 [^\n]+\n {2}~\/\.claude\/CLAUDE\.md\n {4}✓ never force-push [^\n]+\n {4}○ clickup writes /);
+  assert.doesNotMatch(out, /web\/CLAUDE\.md/);
+  // Columns line up across files.
+  const at = (name: string) => out.split('\n').find((l) => l.includes(name))!.search(/(kept|never applied)/);
+  assert.equal(at('never force-push'), at('never git add -A'));
 });
 
 test('no transcripts: one line naming the folder and the config dir', () => {
@@ -162,7 +194,7 @@ test('transcripts not recognized, and sections not read yet: one line each', () 
 });
 
 test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of each, demoted rules', () => {
-  const out = text({ ...sketch, sessions: 1, subagents: 1, files: ['a'], toJudge: 0,
+  const out = text({ ...sketch, sessions: 1, subagents: 1, files: ['/home/someone/repos/billing/CLAUDE.md'], toJudge: 0,
     rules: [r('never sudo', 'broken', 1000, 999, { evidence: [seen('2026-11-09T12:00:00Z', 'aaaaaaaa', 'sudo ls')] }),
       r('failing test first', 'judgment', 0, 0, { reason: 'no case to judge it on' }), r('never rm', 'demoted', 0, 0)],
     byDepth: buckets([[1000, 999], [19, 0], [0, 0], [0, 0]]) }, options);
@@ -170,8 +202,9 @@ test('the edges: 1% when a case was kept, – under 20 cases, yesterday, one of 
   ~/repos/billing · 1 session, 1 subagent · oct 11 – nov 10
   1 file · 3 rules · 1 checked · 1 need a judge · 1 set aside
 
-  ✗ never sudo  kept 1% of 1,000  broken 999×  last yesterday
-      nov 9   aaaaaaaa  sudo ls
+  CLAUDE.md
+    ✗ never sudo  kept 1% of 1,000  broken 999×  last yesterday
+        nov 9   aaaaaaaa  sudo ls
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                               1%          –          –       –
@@ -198,13 +231,13 @@ const found: Report = {
 const listed = `
   ~/repos/billing · 3 files · 5 rules
 
-  ~/.claude/CLAUDE.md
-    ✓ clickup is read-only          tool mcp__.*clickup.*  broken tool _(create|update|delete)_  ignoring case
   CLAUDE.local.md
     ✓ never git add -A              Bash command  when \\bgit\\s+add\\b  broken \\s(-A|--all)\\b
     ✓ always talk to me in italian  language it
     · failing test first            needs a judge, no cases: no case to judge it on
     ! never kill billing            failed its examples: keeps "pkill -f billingd-test"
+  ~/.claude/CLAUDE.md
+    ✓ clickup is read-only          tool mcp__.*clickup.*  broken tool _(create|update|delete)_  ignoring case
 `;
 
 test('heeded rules: by file, each rule under the first file that has it, with how it is checked, whole', () => {

@@ -117,7 +117,7 @@ test('a terminal, cases waiting: the cases and what they cost, judged on yes; a 
   assert.equal(err, '1 case to judge · claude haiku · ~3k tokens\njudged 1 case · 4,000 tokens\n');
   assert.deepEqual(asked, ['go ahead? [y/N] ']);
   assert.equal(calls(), 1);
-  assert.match(out, /\n {2}✗ never git add -A {2}kept 0% of 1 {2}broken 1× {2}last /);
+  assert.match(out, /\n {4}✗ never git add -A {2}kept 0% of 1 {2}broken 1× {2}last /);
 });
 
 test('a run with nothing waiting asks nothing and spends nothing', async () => {
@@ -137,7 +137,7 @@ test('not a terminal: nothing read or judged, the report says what waits', async
   assert.equal(doc.toJudge, 1);
   assert.deepEqual([doc.rules[0].broken, doc.rules[0].toJudge], [0, 1]);
   const { out } = await heeded([]);
-  assert.match(out, /\n {2}\? never git add -A {2}1 to confirm\n/);
+  assert.match(out, /\n {4}\? never git add -A {2}1 to confirm\n/);
   assert.match(out, /\n {2}1 case waiting for the judge, ~3k tokens: run heeded again\n/);
   assert.equal(calls(), 0);
 });

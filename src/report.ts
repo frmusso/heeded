@@ -27,6 +27,17 @@ const notRead = (n: number) => `  ${plural(n, 'section')} not read yet: the rule
 export const approx = (tokens: number) =>
   (tokens >= 999_500 ? `~${Number((tokens / 1_000_000).toFixed(1))}M` : `~${Math.round(tokens / 1000)}k`);
 
+/** The instruction files in the order the report and `heeded rules` list them: the folder's own first, then the files
+ * from outside it (the user's own file, a parent folder's), each in the order heeded met them. */
+const inOrder = (r: Report) => {
+  const inside = (f: string) => f.startsWith(`${r.folder}/`);
+  return [...r.files.filter(inside), ...r.files.filter((f) => !inside(f))];
+};
+
+/** A file as the user finds it: by its path in the folder, or from home. */
+const where = (r: Report, path: string, home: string) =>
+  (path.startsWith(`${r.folder}/`) ? path.slice(r.folder.length + 1) : tilde(path, home));
+
 /** Floored, so never 100% with a violation; and never 0% with a case kept. */
 function kept(applied: number, broken: number): string {
   const p = Math.floor((100 * (applied - broken)) / applied);
@@ -52,9 +63,9 @@ export function text(r: Report, o: TextOptions): string {
   const home = (path: string) => tilde(path, o.home);
   const color = (code: number, off: number, s: string) => paint(o.color, code, off, s);
   // Only rules and evidence are cut to the width: a folder's path is never cut.
-  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {2})([✗✓○?·])/gm, (_, indent, mark) =>
+  const out = (blocks: string[][]) => `\n${blocks.filter((b) => b.length).map((b) => b.join('\n')).join('\n\n')}\n`.replace(/^( {4})([✗✓○?·])/gm, (_, indent, mark) =>
     indent + (mark === '✗' ? color(31, 39, mark) : mark === '✓' ? color(32, 39, mark) : color(2, 22, mark)))
-    .replace(/^( {6}[a-z]{3} \d.*)$/gm, (line) => color(2, 22, line));
+    .replace(/^( {8}[a-z]{3} \d.*)$/gm, (line) => color(2, 22, line));
   const unrecognized = r.unrecognized.length
     ? [`  ${plural(r.unrecognized.length, 'transcript')} unrecognized: claude code may have changed its format`] : [];
   if (!r.sessions) return out([[`  no claude code transcripts for ${home(r.folder)} in ${home(r.configDir)}`, ...unrecognized]]);
@@ -75,7 +86,9 @@ export function text(r: Report, o: TextOptions): string {
   // wait, or that no call or reply can show, is counted at the end.
   const unapplied = judgment.filter((x) => !x.reason && !x.applied && !x.toJudge);
   const never = (x: RuleData) => x.status === 'never-applied' || unapplied.includes(x);
-  const shown = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)];
+  // Grouped by the file each rule is written in (the first, when it is in several), each file in that order.
+  const listed = [...checked, ...unapplied, ...judgment.filter((x) => x.applied)];
+  const shown = inOrder(r).flatMap((f) => listed.filter((x) => x.files[0] === f));
   const rows = shown.map((x) => [x.name, ...(never(x)
     ? [`never applied${x.judged ? ` in ${thousands(x.judged)} judged` : ''}`, `~${thousands(x.tokens)} tokens every session`]
     : x.status === 'to-confirm' ? []
@@ -84,19 +97,21 @@ export function text(r: Report, o: TextOptions): string {
   ...(x.status !== 'judgment' && x.toJudge ? [`${thousands(x.toJudge)} to confirm`] : [])]);
   const laid = (width: number) => columns(rows.map(([name, ...rest]) => [cut(name, width).padEnd(width), ...rest]));
   let width = Math.max(...rows.map((row) => row[0].length));
-  while (width > 10 && Math.max(...laid(width).map((l) => l.length + 4)) > o.columns) width--;
+  while (width > 10 && Math.max(...laid(width).map((l) => l.length + 6)) > o.columns) width--;
   const mark = { broken: '✗', kept: '✓', 'to-confirm': '?', judgment: '·' } as Record<string, string>;
-  const lines = laid(width).map((l, i) => cut(`  ${never(shown[i]) ? '○' : mark[shown[i].status]} ${l}`, o.columns));
+  const lines = laid(width).map((l, i) => cut(`    ${never(shown[i]) ? '○' : mark[shown[i].status]} ${l}`, o.columns));
   const rules: string[] = [];
   shown.forEach((x, i) => {
+    if (x.files[0] !== shown[i - 1]?.files[0]) rules.push(`  ${where(r, x.files[0], o.home)}`);
     rules.push(lines[i]);
     if (x.afterCompaction.applied >= 20) {
-      rules.push(`      after compaction kept ${kept(x.afterCompaction.applied, x.afterCompaction.broken)} of ${thousands(x.afterCompaction.applied)}`);
+      const { applied, broken } = x.afterCompaction;
+      rules.push(`        after compaction kept ${kept(applied, broken)} of ${thousands(applied)}`);
     }
     // A judgment rule's evidence is the judge's words; a tool rule's, what in the call broke it.
     for (const e of x.broken ? x.evidence.slice(0, 3) : []) {
       const what = x.status === 'judgment' ? e.quote ?? e.text : e.text;
-      rules.push(cut(`      ${date(e.at).padEnd(6)}  ${e.session.slice(0, 8)}  ${what}`, o.columns));
+      rules.push(cut(`        ${date(e.at).padEnd(6)}  ${e.session.slice(0, 8)}  ${what}`, o.columns));
     }
   });
 
@@ -145,12 +160,11 @@ function patterns(c: NonNullable<RuleData['check']>): string {
 /** The rules found, by file, and how each one is checked. Never cut to the terminal's width: the patterns are what this
  * list is for. */
 export function rules(r: Report, o: { color: boolean; home: string }): string {
-  const where = (path: string) => (path.startsWith(`${r.folder}/`) ? path.slice(r.folder.length + 1) : tilde(path, o.home));
   const width = Math.max(...r.rules.map((x) => x.name.length));
   const lines = ['', `  ${tilde(r.folder, o.home)} · ${plural(r.files.length, 'file')} · ${plural(r.rules.length, 'rule')}`, ''];
-  for (const file of r.files) {
+  for (const file of inOrder(r)) {
     const mine = r.rules.filter((x) => x.files[0] === file);
-    if (mine.length) lines.push(`  ${where(file)}`);
+    if (mine.length) lines.push(`  ${where(r, file, o.home)}`);
     for (const x of mine) {
       const mark = x.status === 'judgment' ? paint(o.color, 2, 22, '·') : x.status === 'demoted' ? paint(o.color, 33, 39, '!')
         : paint(o.color, 32, 39, '✓');
