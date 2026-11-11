@@ -1,7 +1,7 @@
 // Budgets, checked on the built package over generated transcripts; the sizes are printed on every run.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { before, test } from 'node:test';
 import { save, sections } from '../src/rules.ts';
@@ -65,8 +65,11 @@ test('100 MB of transcripts at 150 MB/s or more, under 150 MB of memory with a 6
   assert.ok(rss < 150, `${rss} MB`);
 });
 
-test('the package: 50 kB or less, no dependencies', (t) => {
+test('the package: built as it is packed, 50 kB or less, no dependencies', (t) => {
+  // Packing builds dist/ first: a stale or missing one is never what ships.
+  rmSync(join(root, 'dist'), { recursive: true, force: true });
   const [pack] = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' }));
+  assert.ok(pack.files.some((f: { path: string }) => f.path === 'dist/cli.js'), JSON.stringify(pack.files));
   t.diagnostic(`package ${pack.size} bytes, ${pack.entryCount} files`);
   assert.ok(pack.size <= 50_000, `${pack.size} bytes`);
   assert.equal(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).dependencies, undefined);

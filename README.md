@@ -11,21 +11,23 @@ $ npx heeded
   ~/repos/app · 76 sessions, 412 subagents · oct 11 – nov 10
   3 files · 41 rules · 12 checked · 29 need a judge
 
-  ✗ never git add -A    kept 95% of 214            broken 9×    last 2 days ago
-      nov 8   19df6c20  git add -A && git commit -m "fix: …"
-      nov 2   8c0e8fab  git add -A
-  ✗ answer in italian   kept 96% of 3,812          broken 152×  last today
-      after compaction kept 69% of 410
-  ✓ never force-push    kept 100% of 61
-  ○ use pnpm, not npm   never applied              ~40 tokens every session
-  ○ ask before deploys  never applied in 8 judged  ~30 tokens every session
-  · failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
+  CLAUDE.md
+    ✗ never git add -A    kept 95% of 214            broken 9×    last 2 days ago
+        nov 8   19df6c20  git add -A && git commit -m "fix: …"
+        nov 2   8c0e8fab  git add -A
+    ✓ never force-push    kept 100% of 61
+    ○ use pnpm, not npm   never applied              ~40 tokens every session
+    · failing test first  kept 80% of 20 judged      broken 4×    last 3 days ago
+  ~/.claude/CLAUDE.md
+    ✗ answer in italian   kept 96% of 3,812          broken 152×  last today
+        after compaction kept 69% of 410
+    ○ ask before deploys  never applied in 8 judged  ~30 tokens every session
 
   kept by context depth   0–100k   100–200k   200–400k   400k+
                              98%        97%        91%     84%
 
-  18 rules no call or reply shows: heeded rules
-  31 cases waiting for the judge, ~94k tokens: run heeded again
+  6 rules no call or reply shows: heeded rules
+  up to date: new sessions and changes to instruction files are read on the next run
 ```
 
 <sub>a sketch: the numbers are invented.</sub>
@@ -35,11 +37,13 @@ $ npx heeded
 | `✗` | was broken: every case confirmed by the judge, listed with its date, session and call |
 | `✓` | was kept every time it applied |
 | `?` | has candidates only: a pattern flagged them, the judge hasn't looked yet |
-| `○` | never applied: it sits in every session's context for nothing |
+| `○` | never applied in these sessions: it sits in every session's context all the same |
 | `·` | needs a judge, no pattern can decide it: a sample of its cases was judged |
 
 - `kept 95% of 214`: the rule applied 214 times and was kept in 95% of them.
 - `after compaction`: the same rule, counted only after claude code compacted the context.
+- each rule is under the file it is written in: the folder's files first, then the others (`~/.claude/CLAUDE.md` is
+  loaded in every project, so a rule there can be never applied here and needed elsewhere).
 - `kept by context depth`: every rule together, by how full the context was at the time.
 - `never applied in 8 judged`: none of the 8 cases the judge read was about the rule.
 - `rules no call or reply shows`: rules about how to work ("plan before coding"), which no single call or reply can
@@ -54,8 +58,7 @@ npx heeded --all     # judge every case waiting, not one run's 150k tokens
 npx heeded --json    # everything, as json
 ```
 
-needs node 22 or later and claude code, signed in: heeded calls your own `claude` to read rules and to judge. not on
-npm yet: run it from a clone, see [CONTRIBUTING.md](CONTRIBUTING.md).
+needs node 22 or later and claude code, signed in: heeded calls your own `claude` to read rules and to judge.
 
 ## how it works
 
@@ -75,7 +78,8 @@ npm yet: run it from a clone, see [CONTRIBUTING.md](CONTRIBUTING.md).
    itself. it answers broken, kept, or doesn't apply. only your words grant a permission; an agent's never do. each
    verdict is cached. a rule the judge decides is tried on 8 of its cases first: if none is about it, it stops there;
    if some are, it goes on to 20 cases that applied, or 40 judged. up to 3 calls run at once.
-5. **report.** what was kept and what was broken, with the evidence, by context depth and after compaction.
+5. **report.** each rule under its file: kept, broken with the evidence, never applied; by context depth and after
+   compaction.
 
 steps 2 and 4 cost tokens. heeded shows the estimate and asks once, before spending anything:
 
@@ -87,6 +91,10 @@ go ahead? [y/N]
 a run judges within 150k tokens and nothing is paid for twice, so coverage grows run after run. `heeded --all` goes to
 the end instead: its question shows what waits now and the most it can reach, then it judges round after round until
 nothing waits. off a terminal (ci, a script) it never spends.
+
+run it again whenever you like: every run reads the transcripts again, for free, and asks only when something new
+costs tokens (sessions since, a section edited). what was read or judged is cached and never paid for twice; with
+nothing new, the report ends `up to date`.
 
 `heeded rules` shows what each rule became:
 
@@ -114,8 +122,6 @@ text of instruction sections not read before, and the excerpts the judge reads. 
 what is written to files like `.env` is never sent. no telemetry.
 
 `CLAUDE_CONFIG_DIR` points heeded at another claude code folder (default `~/.claude`).
-
-> **status:** v2.2, not published yet.
 
 ## license
 

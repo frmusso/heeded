@@ -36,7 +36,7 @@ reads CLAUDE_CONFIG_DIR, else ~/.claude. caches rules and verdicts in XDG_CACHE_
 test('heeded --version', () => {
   const { status, stdout } = run('--version');
   assert.equal(status, 0);
-  assert.equal(stdout, '0.0.0\n');
+  assert.equal(stdout, '0.1.0\n');
 });
 
 test('an unknown option or command: exit 2, one lowercase line on stderr', () => {

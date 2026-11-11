@@ -4,7 +4,7 @@ heeded measures whether coding agents follow their instruction files (`CLAUDE.md
 transcripts they leave on disk. this file is for anyone working on its code, and for their agents: [README.md](README.md)
 is for users. personal instructions go in `CLAUDE.local.md`, which git ignores.
 
-**status:** v2.2 implemented, not published yet.
+**status:** v2.3, `0.1.0` ready to publish.
 
 ## principles
 
